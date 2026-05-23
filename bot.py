@@ -17,7 +17,7 @@ USER1 = os.environ.get("USER1", "tim")
 USER2 = os.environ.get("USER2", "masha")
 
 CATEGORIES = [
-    "🛒 Продукты", "🍽 Рестораны", "🛵 Доставка", "☕️ Кофик",
+    "🛒 Продукты", "🍽 Рестораны", "🛵 Доставка", "☕️ Кофик/Сигареты",
     "💪 Спортзал", "🏥 Страховка", "🏠 Дом",
     "👗 Одежда", "📦 Онлайн-покупки", "🎁 Подарки", "📝 Другое",
 ]
@@ -53,7 +53,7 @@ INCOME_USD  = 3700.0
 def main_kb():
     return ReplyKeyboardMarkup([
         [KeyboardButton("💸 Добавить трату"),  KeyboardButton("📊 Обзор")],
-        [KeyboardButton("🏦 Накопления"),       KeyboardButton("📈 Статистика")],
+        [KeyboardButton("🏦 Накопления"),       KeyboardButton("📈 Аналитика")],
         [KeyboardButton("🤝 Долги"),            KeyboardButton("📜 История")],
         [KeyboardButton("🏠 Фикс. расходы"),   KeyboardButton("⚙️ Кошелёк")],
     ], resize_keyboard=True)
@@ -66,7 +66,7 @@ def back_kb():
 
 MAIN_BUTTONS = {
     "💸 Добавить трату", "📊 Обзор", "🏦 Накопления",
-    "📈 Статистика", "🤝 Долги", "📜 История",
+    "📈 Аналитика", "🤝 Долги", "📜 История",
     "🏠 Фикс. расходы", "⚙️ Кошелёк",
 }
 
@@ -188,8 +188,8 @@ async def menu_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await show_overview(update, ctx); return MAIN_MENU
     elif text == "🏦 Накопления":
         await show_savings(update, ctx); return MAIN_MENU
-    elif text == "📈 Статистика":
-        await show_stats(update, ctx); return MAIN_MENU
+    elif text == "📈 Аналитика":
+        await show_analytics(update, ctx); return MAIN_MENU
     elif text == "🤝 Долги":
         await show_debts_menu(update, ctx); return MAIN_MENU
     elif text == "📜 История":
@@ -537,11 +537,11 @@ def main():
     conv = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
-            MessageHandler(filters.Regex("^(💸 Добавить трату|📊 Обзор|🏦 Накопления|📈 Статистика|🤝 Долги|📜 История|🏠 Фикс. расходы|⚙️ Кошелёк)$"), menu_router),
+            MessageHandler(filters.Regex("^(💸 Добавить трату|📊 Обзор|🏦 Накопления|📈 Аналитика|🤝 Долги|📜 История|🏠 Фикс. расходы|⚙️ Кошелёк)$"), menu_router),
         ],
         states={
             MAIN_MENU: [
-                MessageHandler(filters.Regex("^(💸 Добавить трату|📊 Обзор|🏦 Накопления|📈 Статистика|🤝 Долги|📜 История|🏠 Фикс. расходы|⚙️ Кошелёк)$"), menu_router),
+                MessageHandler(filters.Regex("^(💸 Добавить трату|📊 Обзор|🏦 Накопления|📈 Аналитика|🤝 Долги|📜 История|🏠 Фикс. расходы|⚙️ Кошелёк)$"), menu_router),
             ],
             ADD_CATEGORY: [
                 CallbackQueryHandler(add_category_chosen, pattern="^cat:"),
@@ -586,6 +586,8 @@ def main():
 
     # Debt callback outside conversation (settle button)
     app.add_handler(CallbackQueryHandler(debt_callback, pattern="^debt:"))
+    # Analytics callbacks
+    app.add_handler(CallbackQueryHandler(analytics_callback, pattern="^(an_month:|an_compare:|an_year:|noop)"))
     app.add_handler(conv)
 
     print("🤖 Бот запущен!")
@@ -593,3 +595,153 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# ═══════════════════════════════════════════════════════════════
+# АНАЛИТИКА — навигация по месяцам, сравнение, год
+# ═══════════════════════════════════════════════════════════════
+
+def month_expenses_by(year: int, month: int) -> float:
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT SUM(amount_eur) FROM expenses WHERE date LIKE ?", (f"{year}-{month:02d}%",))
+    row = c.fetchone(); conn.close()
+    return row[0] or 0.0
+
+def month_by_category_for(year: int, month: int) -> dict:
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT category, SUM(amount_eur) FROM expenses WHERE date LIKE ? GROUP BY category",
+              (f"{year}-{month:02d}%",))
+    rows = c.fetchall(); conn.close()
+    return {r[0]: r[1] for r in rows}
+
+def month_name_ru(month: int) -> str:
+    names = ["Январь","Февраль","Март","Апрель","Май","Июнь",
+             "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"]
+    return names[month - 1]
+
+def prev_month(year: int, month: int):
+    return (year - 1, 12) if month == 1 else (year, month - 1)
+
+def next_month(year: int, month: int):
+    return (year + 1, 1) if month == 12 else (year, month + 1)
+
+def analytics_nav_kb(year: int, month: int) -> InlineKeyboardMarkup:
+    py, pm = prev_month(year, month)
+    ny, nm = next_month(year, month)
+    today = date.today()
+    buttons = [
+        InlineKeyboardButton(f"◀️ {month_name_ru(pm)[:3]}", callback_data=f"an_month:{py}:{pm}"),
+        InlineKeyboardButton(f"📅 {month_name_ru(month)} {year}", callback_data="noop"),
+    ]
+    if (ny, nm) <= (today.year, today.month):
+        buttons.append(InlineKeyboardButton(f"{month_name_ru(nm)[:3]} ▶️", callback_data=f"an_month:{ny}:{nm}"))
+    row2 = [
+        InlineKeyboardButton("⚖️ Сравнить с пред. месяцем", callback_data=f"an_compare:{year}:{month}"),
+        InlineKeyboardButton("📆 Год", callback_data=f"an_year:{year}"),
+    ]
+    return InlineKeyboardMarkup([buttons, row2])
+
+def format_month_stats(year: int, month: int) -> str:
+    cats = month_by_category_for(year, month)
+    income_eur = usd_to_eur(INCOME_USD)
+    total = sum(cats.values()) if cats else 0.0
+    left = income_eur - FIXED_TOTAL - total
+    lines = [f"📈 *{month_name_ru(month)} {year}*\n"]
+    if cats:
+        for cat, amt in sorted(cats.items(), key=lambda x: -x[1]):
+            pct = amt / total * 100
+            bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
+            lines.append(f"{cat}\n`{bar}` {pct:.0f}%  €{amt:.0f}\n")
+        lines.append(f"💶 *Потрачено: €{total:.0f}*")
+        lines.append(f"{'🟢' if left > 0 else '🔴'} Остаток: *€{left:.0f}*")
+    else:
+        lines.append("📭 Трат нет")
+    return "\n".join(lines)
+
+# ── Показать аналитику за месяц (команда из меню) ─────────────
+async def show_analytics(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    today = date.today()
+    year, month = today.year, today.month
+    text = format_month_stats(year, month)
+    await update.message.reply_text(
+        text, parse_mode="Markdown",
+        reply_markup=analytics_nav_kb(year, month)
+    )
+
+# ── Callback: переключение месяца ─────────────────────────────
+async def analytics_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "noop":
+        return
+
+    if data.startswith("an_month:"):
+        _, year, month = data.split(":")
+        year, month = int(year), int(month)
+        text = format_month_stats(year, month)
+        await query.edit_message_text(
+            text, parse_mode="Markdown",
+            reply_markup=analytics_nav_kb(year, month)
+        )
+
+    elif data.startswith("an_compare:"):
+        _, year, month = data.split(":")
+        year, month = int(year), int(month)
+        py, pm = prev_month(year, month)
+
+        cats_cur  = month_by_category_for(year, month)
+        cats_prev = month_by_category_for(py, pm)
+        total_cur  = sum(cats_cur.values())  if cats_cur  else 0.0
+        total_prev = sum(cats_prev.values()) if cats_prev else 0.0
+        diff = total_cur - total_prev
+        diff_sym = "📈" if diff > 0 else "📉"
+
+        all_cats = set(list(cats_cur.keys()) + list(cats_prev.keys()))
+        lines = [
+            f"⚖️ *Сравнение*\n",
+            f"{'Категория':<22} {month_name_ru(pm)[:3]:>6}  {month_name_ru(month)[:3]:>6}  {'±':>6}\n",
+        ]
+        for cat in sorted(all_cats):
+            a = cats_prev.get(cat, 0.0)
+            b = cats_cur.get(cat, 0.0)
+            delta = b - a
+            sign = "+" if delta > 0 else ""
+            # trim cat emoji+name to fit
+            short = cat.split(" ", 1)[-1][:14]
+            lines.append(f"`{short:<14}` €{a:>5.0f}  €{b:>5.0f}  {sign}{delta:>+.0f}")
+
+        lines.append(f"\n💶 *{month_name_ru(pm)}: €{total_prev:.0f}*")
+        lines.append(f"💶 *{month_name_ru(month)}: €{total_cur:.0f}*")
+        lines.append(f"{diff_sym} Разница: *{'+' if diff>0 else ''}{diff:.0f} €*")
+
+        back_kb_inline = InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ Назад", callback_data=f"an_month:{year}:{month}")
+        ]])
+        await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=back_kb_inline)
+
+    elif data.startswith("an_year:"):
+        _, year = data.split(":")
+        year = int(year)
+        lines = [f"📆 *Годовой обзор — {year}*\n"]
+        grand = 0.0
+        income_eur = usd_to_eur(INCOME_USD)
+        for m in range(1, 13):
+            total = month_expenses_by(year, m)
+            grand += total
+            if total > 0:
+                saved = income_eur - FIXED_TOTAL - total
+                bar_len = min(int(total / 200), 15)
+                bar = "█" * bar_len
+                lines.append(f"`{month_name_ru(m)[:3]}` `{bar:<15}` €{total:.0f}  {'🟢' if saved>0 else '🔴'}€{abs(saved):.0f}")
+            else:
+                lines.append(f"`{month_name_ru(m)[:3]}` —")
+        lines.append(f"\n💶 *Итого за год: €{grand:.0f}*")
+        lines.append(f"📊 Среднее/мес: *€{grand/12:.0f}*")
+
+        back_kb_inline = InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ Назад", callback_data=f"an_month:{year}:{date.today().month}")
+        ]])
+        await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=back_kb_inline)
