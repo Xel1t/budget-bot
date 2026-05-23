@@ -2,6 +2,7 @@ import os
 import sqlite3
 import requests
 import math
+import json
 from datetime import datetime, date
 from calendar import monthrange
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
@@ -9,6 +10,13 @@ from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     MessageHandler, filters, ContextTypes, ConversationHandler
 )
+
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials
+    GSPREAD_AVAILABLE = True
+except ImportError:
+    GSPREAD_AVAILABLE = False
 
 DB_PATH = os.environ.get("DB_PATH", "budget.db")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
@@ -42,12 +50,53 @@ FIXED_EXPENSES = [
 FIXED_TOTAL = sum(a for _, a in FIXED_EXPENSES)
 INCOME_USD  = 3700.0
 
+GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "1pke7JzLELpxgvkcRwHCUcYRWKvP4YFhyjqSSv5eE6WU")
+GOOGLE_CREDENTIALS = os.environ.get("GOOGLE_CREDENTIALS", "")
+
 (
     MAIN_MENU,
     ADD_CATEGORY, ADD_AMOUNT, ADD_DESC,
     DEBT_WHO, DEBT_AMOUNT_S, DEBT_CURRENCY, DEBT_DESC_S,
     WALLET_CHOOSE, WALLET_OP, WALLET_AMOUNT_S,
 ) = range(11)
+
+
+# ── Google Sheets ──────────────────────────────────────────────
+def get_sheet():
+    if not GSPREAD_AVAILABLE or not GOOGLE_CREDENTIALS:
+        return None
+    try:
+        creds_dict = json.loads(GOOGLE_CREDENTIALS)
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        client = gspread.authorize(creds)
+        return client.open_by_key(GOOGLE_SHEET_ID)
+    except Exception as e:
+        print(f"Google Sheets error: {e}")
+        return None
+
+def sheets_init_headers():
+    """Create headers if sheet is empty."""
+    try:
+        sh = get_sheet()
+        if not sh: return
+        ws = sh.sheet1
+        if ws.row_count == 0 or ws.cell(1, 1).value != "Дата":
+            ws.update("A1:F1", [["Дата", "Кто", "Категория", "Сумма €", "Комментарий", "Месяц"]])
+            ws.format("A1:F1", {"textFormat": {"bold": True}})
+    except Exception as e:
+        print(f"Sheets init error: {e}")
+
+def sheets_add_expense(username: str, amount_eur: float, category: str, description: str, dt: str):
+    """Append a new expense row to Google Sheets."""
+    try:
+        sh = get_sheet()
+        if not sh: return
+        ws = sh.sheet1
+        month = dt[:7]  # YYYY-MM
+        ws.append_row([dt, f"@{username}", category, amount_eur, description or "", month])
+    except Exception as e:
+        print(f"Sheets append error: {e}")
 
 
 # ── Keyboards ─────────────────────────────────────────────────
@@ -262,6 +311,8 @@ async def add_desc(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         (username, ctx.user_data["amount_eur"], ctx.user_data["category"], desc, date.today().isoformat())
     )
     conn.commit(); conn.close()
+    # Sync to Google Sheets
+    sheets_add_expense(username, ctx.user_data["amount_eur"], ctx.user_data["category"], desc, date.today().isoformat())
     spent = month_expenses_eur()
     left = usd_to_eur(INCOME_USD) - FIXED_TOTAL - spent
     inline_kb = InlineKeyboardMarkup([[
@@ -677,6 +728,7 @@ async def cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ── main ──────────────────────────────────────────────────────
 def main():
     init_db()
+    sheets_init_headers()
     app = Application.builder().token(BOT_TOKEN).build()
 
     menu_pattern = "^(💸 Добавить трату|📊 Обзор|🏦 Накопления|📈 Аналитика|🤝 Долги|📜 История|🏠 Фикс. расходы|⚙️ Кошелёк)$"
