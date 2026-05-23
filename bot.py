@@ -66,25 +66,25 @@ def back_kb():
 # ── DB ────────────────────────────────────────────────────────
 def init_db():
     conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS expenses (
+    cur = conn.cursor()
+    cur.execute('''CREATE TABLE IF NOT EXISTS expenses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT, amount_eur REAL,
         category TEXT, description TEXT, date TEXT
     )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS debts (
+    cur.execute('''CREATE TABLE IF NOT EXISTS debts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         from_user TEXT, amount REAL, currency TEXT,
         description TEXT, date TEXT, settled INTEGER DEFAULT 0
     )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS wallets (
+    cur.execute('''CREATE TABLE IF NOT EXISTS wallets (
         key TEXT PRIMARY KEY, label TEXT, currency TEXT, amount REAL
     )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS exchange_cache (
+    cur.execute('''CREATE TABLE IF NOT EXISTS exchange_cache (
         pair TEXT PRIMARY KEY, rate REAL, updated TEXT
     )''')
     for key, label, cur, amount in WALLETS_DEFAULT:
-        c.execute("INSERT OR IGNORE INTO wallets VALUES (?,?,?,?)", (key, label, cur, amount))
+        cur.execute("INSERT OR IGNORE INTO wallets VALUES (?,?,?,?)", (key, label, cur, amount))
     conn.commit()
     conn.close()
 
@@ -95,9 +95,9 @@ def get_db():
 # ── Exchange ──────────────────────────────────────────────────
 def get_usd_to_eur() -> float:
     conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT rate, updated FROM exchange_cache WHERE pair='USD_EUR'")
-    row = c.fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT rate, updated FROM exchange_cache WHERE pair='USD_EUR'")
+    row = cur.fetchone()
     conn.close()
     if row:
         if (datetime.now() - datetime.fromisoformat(row[1])).seconds < 3600:
@@ -130,31 +130,31 @@ def get_username(update: Update) -> str:
 def month_expenses_eur() -> float:
     today = date.today()
     conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT SUM(amount_eur) FROM expenses WHERE date LIKE ?", (f"{today.year}-{today.month:02d}%",))
-    row = c.fetchone(); conn.close()
+    cur = conn.cursor()
+    cur.execute("SELECT SUM(amount_eur) FROM expenses WHERE date LIKE ?", (f"{today.year}-{today.month:02d}%",))
+    row = cur.fetchone(); conn.close()
     return row[0] or 0.0
 
 def month_expenses_by(year: int, month: int) -> float:
     conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT SUM(amount_eur) FROM expenses WHERE date LIKE ?", (f"{year}-{month:02d}%",))
-    row = c.fetchone(); conn.close()
+    cur = conn.cursor()
+    cur.execute("SELECT SUM(amount_eur) FROM expenses WHERE date LIKE ?", (f"{year}-{month:02d}%",))
+    row = cur.fetchone(); conn.close()
     return row[0] or 0.0
 
 def month_by_category_for(year: int, month: int) -> dict:
     conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT category, SUM(amount_eur) FROM expenses WHERE date LIKE ? GROUP BY category",
+    cur = conn.cursor()
+    cur.execute("SELECT category, SUM(amount_eur) FROM expenses WHERE date LIKE ? GROUP BY category",
               (f"{year}-{month:02d}%",))
-    rows = c.fetchall(); conn.close()
+    rows = cur.fetchall(); conn.close()
     return {r[0]: r[1] for r in rows}
 
 def total_savings_usd() -> float:
     conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT currency, amount FROM wallets")
-    rows = c.fetchall(); conn.close()
+    cur = conn.cursor()
+    cur.execute("SELECT currency, amount FROM wallets")
+    rows = cur.fetchall(); conn.close()
     total = 0.0
     for cur, amt in rows:
         total += amt if cur == "$" else eur_to_usd(amt)
@@ -302,9 +302,9 @@ async def show_overview(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ── Накопления ────────────────────────────────────────────────
 async def show_savings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT key, label, currency, amount FROM wallets")
-    rows = c.fetchall(); conn.close()
+    cur = conn.cursor()
+    cur.execute("SELECT key, label, currency, amount FROM wallets")
+    rows = cur.fetchall(); conn.close()
     rate = get_usd_to_eur()
     lines = ["🏦 *Накопления по кошелькам:*\n"]
     total_usd = 0.0
@@ -324,28 +324,34 @@ async def show_savings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ── История ───────────────────────────────────────────────────
 async def show_history(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT id, username, amount_eur, category, description, date FROM expenses ORDER BY id DESC LIMIT 10")
-    rows = c.fetchall(); conn.close()
+    cur = conn.cursor()
+    cur.execute("SELECT id, username, amount_eur, category, description, date FROM expenses ORDER BY id DESC LIMIT 10")
+    rows = cur.fetchall(); conn.close()
     if not rows:
         await update.message.reply_text("📭 Записей пока нет.", reply_markup=main_kb())
         return
-    await update.message.reply_text("📜 *Последние 10 трат:*\n_(нажми 🗑 чтобы удалить)_", parse_mode="Markdown", reply_markup=main_kb())
+    await update.message.reply_text("📜 *Последние 10 трат:*\n_нажми 🗑 чтобы удалить_", parse_mode="Markdown", reply_markup=main_kb())
     for eid, user, amt, cat, desc, dt in rows:
-        text = f"`{dt[5:]}` {cat}\n💶 €{c(amt)}  👤 {user}" + (f"\n📝 {desc}" if desc else "")
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🗑 Удалить", callback_data=f"del_expense:{eid}")
-        ]])
-        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
+        try:
+            date_str = dt[5:10] if dt else "??-??"
+            user_str = f"@{user}" if user else "неизвестно"
+            desc_str = f"\n📝 {desc}" if desc else ""
+            text = f"`{date_str}` {cat}\n💶 €{c(amt)}  👤 {user_str}{desc_str}"
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🗑 Удалить", callback_data=f"del_expense:{eid}")
+            ]])
+            await update.message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
+        except Exception:
+            continue
 
 async def delete_expense_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     eid = int(query.data.replace("del_expense:", ""))
     conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT amount_eur, category, description FROM expenses WHERE id=?", (eid,))
-    row = c.fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT amount_eur, category, description FROM expenses WHERE id=?", (eid,))
+    row = cur.fetchone()
     if row:
         conn.execute("DELETE FROM expenses WHERE id=?", (eid,))
         conn.commit()
@@ -371,9 +377,9 @@ async def show_fixed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ── Долги ─────────────────────────────────────────────────────
 async def show_debts_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT id, from_user, amount, currency, description, date FROM debts WHERE settled=0 ORDER BY id DESC")
-    rows = c.fetchall(); conn.close()
+    cur = conn.cursor()
+    cur.execute("SELECT id, from_user, amount, currency, description, date FROM debts WHERE settled=0 ORDER BY id DESC")
+    rows = cur.fetchall(); conn.close()
     sym_map = {"USD": "$", "EUR": "€", "CASH_USD": "$ нал", "CASH_EUR": "€ нал"}
     keyboard = [[InlineKeyboardButton("➕ Записать долг", callback_data="debt:new")]]
     if rows:
@@ -406,9 +412,9 @@ async def debt_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data.startswith("debt:settle:"):
         debt_id = int(data.split(":")[-1])
         conn = get_db()
-        c = conn.cursor()
-        c.execute("SELECT from_user, amount, currency FROM debts WHERE id=? AND settled=0", (debt_id,))
-        row = c.fetchone()
+        cur = conn.cursor()
+        cur.execute("SELECT from_user, amount, currency FROM debts WHERE id=? AND settled=0", (debt_id,))
+        row = cur.fetchone()
         if row:
             conn.execute("UPDATE debts SET settled=1 WHERE id=?", (debt_id,))
             conn.commit()
@@ -471,9 +477,9 @@ async def debt_desc_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ── Кошелёк ───────────────────────────────────────────────────
 async def wallet_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT key, label, currency, amount FROM wallets")
-    rows = c.fetchall(); conn.close()
+    cur = conn.cursor()
+    cur.execute("SELECT key, label, currency, amount FROM wallets")
+    rows = cur.fetchall(); conn.close()
     keyboard = [
         [InlineKeyboardButton(f"{label}  {cur}{amt:,.0f}", callback_data=f"wlt:{key}")]
         for key, label, cur, amt in rows
@@ -516,9 +522,9 @@ async def wallet_amount(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     key = ctx.user_data["wallet_key"]
     op  = ctx.user_data["wallet_op"]
     conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT label, currency, amount FROM wallets WHERE key=?", (key,))
-    label, cur, old = c.fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT label, currency, amount FROM wallets WHERE key=?", (key,))
+    label, cur, old = cur.fetchone()
     new = old + amount if op == "add" else (old - amount if op == "sub" else amount)
     conn.execute("UPDATE wallets SET amount=? WHERE key=?", (new, key))
     conn.commit(); conn.close()
