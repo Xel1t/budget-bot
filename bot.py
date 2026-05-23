@@ -736,8 +736,12 @@ async def sheet_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lines.append(f"SHEET_ID: {GOOGLE_SHEET_ID}")
     if creds_b64:
         try:
-            decoded = base64.b64decode(creds_b64).decode()
+            import base64 as b64mod
+            decoded = b64mod.b64decode(creds_b64).decode()
             creds_dict = json.loads(decoded)
+            key_b64 = os.environ.get("GOOGLE_PRIVATE_KEY_B64", "")
+            if key_b64:
+                creds_dict["private_key"] = b64mod.b64decode(key_b64).decode()
             key = creds_dict.get("private_key", "")
             lines.append(f"JSON: OK")
             lines.append(f"email: {creds_dict.get('client_email', '?')}")
