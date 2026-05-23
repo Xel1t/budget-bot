@@ -83,8 +83,8 @@ def init_db():
     cur.execute('''CREATE TABLE IF NOT EXISTS exchange_cache (
         pair TEXT PRIMARY KEY, rate REAL, updated TEXT
     )''')
-    for key, label, cur, amount in WALLETS_DEFAULT:
-        cur.execute("INSERT OR IGNORE INTO wallets VALUES (?,?,?,?)", (key, label, cur, amount))
+    for w_key, w_label, w_currency, w_amount in WALLETS_DEFAULT:
+        cur.execute("INSERT OR IGNORE INTO wallets VALUES (?,?,?,?)", (w_key, w_label, w_currency, w_amount))
     conn.commit()
     conn.close()
 
