@@ -75,7 +75,11 @@ def get_sheet():
         creds_dict = json.loads(base64.b64decode(creds_b64).decode())
         # Override private key with separately stored base64-decoded key
         if key_b64:
-            creds_dict["private_key"] = base64.b64decode(key_b64).decode()
+            raw_key = base64.b64decode(key_b64).decode()
+            # Fix any whitespace issues in PEM lines
+            lines_key = raw_key.strip().split('\n')
+            clean_key = '\n'.join(line.strip() for line in lines_key) + '\n'
+            creds_dict["private_key"] = clean_key
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         client = gspread.authorize(creds)
         return client.open_by_key(GOOGLE_SHEET_ID)
