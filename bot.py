@@ -798,10 +798,10 @@ def main():
         allow_reentry=True,
     )
 
+    app.add_handler(CommandHandler("sheetstatus", sheet_status))
     app.add_handler(CallbackQueryHandler(debt_callback, pattern="^debt:"))
     app.add_handler(CallbackQueryHandler(analytics_callback, pattern="^(an_month:|an_compare:|an_year:|noop)"))
     app.add_handler(CallbackQueryHandler(delete_expense_callback, pattern="^del_expense:"))
-    app.add_handler(CommandHandler("sheetstatus", sheet_status))
     app.add_handler(conv)
 
     print("🤖 Бот запущен!")
