@@ -740,7 +740,17 @@ async def sheet_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             lines.append(f"Подключение к таблице: ❌ {e}")
     else:
-        lines.append("Подключение к таблице: ❌")
+        # Try to get detailed error
+        try:
+            creds_dict = json.loads(GOOGLE_CREDENTIALS)
+            scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+            from google.oauth2.service_account import Credentials as C
+            import gspread as gs
+            creds = C.from_service_account_info(creds_dict, scopes=scopes)
+            client = gs.authorize(creds)
+            client.open_by_key(GOOGLE_SHEET_ID)
+        except Exception as e:
+            lines.append(f"Подключение к таблице: ❌\nОшибка: `{str(e)[:200]}`")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
