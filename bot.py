@@ -718,6 +718,32 @@ async def after_record_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return ADD_CATEGORY
 
 
+# ── /sheetstatus ──────────────────────────────────────────────
+async def sheet_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    lines = ["🔍 *Диагностика Google Sheets:*\n"]
+    lines.append(f"gspread доступен: {'✅' if GSPREAD_AVAILABLE else '❌'}")
+    lines.append(f"GOOGLE_CREDENTIALS: {'✅ есть' if GOOGLE_CREDENTIALS else '❌ пусто'}")
+    lines.append(f"GOOGLE_SHEET_ID: `{GOOGLE_SHEET_ID}`")
+    if GOOGLE_CREDENTIALS:
+        try:
+            creds_dict = json.loads(GOOGLE_CREDENTIALS)
+            lines.append(f"JSON парсится: ✅")
+            lines.append(f"client_email: `{creds_dict.get('client_email', '?')}`")
+        except Exception as e:
+            lines.append(f"JSON парсится: ❌ {e}")
+    sh = get_sheet()
+    if sh:
+        try:
+            ws = sh.sheet1
+            lines.append(f"Подключение к таблице: ✅")
+            lines.append(f"Лист: {ws.title}, строк: {ws.row_count}")
+        except Exception as e:
+            lines.append(f"Подключение к таблице: ❌ {e}")
+    else:
+        lines.append("Подключение к таблице: ❌")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
 # ── cancel ────────────────────────────────────────────────────
 async def cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data.clear()
@@ -775,6 +801,7 @@ def main():
     app.add_handler(CallbackQueryHandler(debt_callback, pattern="^debt:"))
     app.add_handler(CallbackQueryHandler(analytics_callback, pattern="^(an_month:|an_compare:|an_year:|noop)"))
     app.add_handler(CallbackQueryHandler(delete_expense_callback, pattern="^del_expense:"))
+    app.add_handler(CommandHandler("sheetstatus", sheet_status))
     app.add_handler(conv)
 
     print("🤖 Бот запущен!")
