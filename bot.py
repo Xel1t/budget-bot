@@ -66,18 +66,13 @@ def get_sheet():
     if not GSPREAD_AVAILABLE:
         return None
     try:
+        import base64
         scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-        if os.path.exists("credentials.json"):
-            with open("credentials.json") as f:
-                creds_dict = json.load(f)
-            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-            creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        elif GOOGLE_CREDENTIALS:
-            creds_dict = json.loads(GOOGLE_CREDENTIALS)
-            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-            creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        else:
+        creds_b64 = os.environ.get("GOOGLE_CREDENTIALS_B64", "")
+        if not creds_b64:
             return None
+        creds_dict = json.loads(base64.b64decode(creds_b64).decode())
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         client = gspread.authorize(creds)
         return client.open_by_key(GOOGLE_SHEET_ID)
     except Exception as e:
@@ -730,24 +725,18 @@ async def after_record_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ── /sheetstatus ──────────────────────────────────────────────
 async def sheet_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lines = ["🔍 *Диагностика Google Sheets:*\n"]
+    import base64
+    creds_b64 = os.environ.get("GOOGLE_CREDENTIALS_B64", "")
     lines.append(f"gspread доступен: {'✅' if GSPREAD_AVAILABLE else '❌'}")
-    lines.append(f"GOOGLE_CREDENTIALS: {'✅ есть' if GOOGLE_CREDENTIALS else '❌ пусто'}")
-    lines.append(f"credentials.json: {'✅ есть' if os.path.exists('credentials.json') else '❌ нет'}")
+    lines.append(f"GOOGLE_CREDENTIALS_B64: {'✅ есть' if creds_b64 else '❌ пусто'}")
     lines.append(f"GOOGLE_SHEET_ID: `{GOOGLE_SHEET_ID}`")
-    if GOOGLE_CREDENTIALS or os.path.exists("credentials.json"):
+    if creds_b64:
         try:
-            if os.path.exists("credentials.json"):
-                with open("credentials.json") as f:
-                    creds_dict = json.load(f)
-                lines.append(f"Источник: файл")
-            else:
-                creds_dict = json.loads(GOOGLE_CREDENTIALS)
-                lines.append(f"Источник: env var")
+            creds_dict = json.loads(base64.b64decode(creds_b64).decode())
             lines.append(f"JSON парсится: ✅")
             lines.append(f"client_email: `{creds_dict.get('client_email', '?')}`")
-            raw_key = creds_dict.get("private_key", "")
-            fixed_key = raw_key.replace("\\n", "\n")
-            lines.append(f"Длина ключа: {len(fixed_key)} (переносов: {fixed_key.count(chr(10))})")
+            key = creds_dict.get("private_key", "")
+            lines.append(f"Длина ключа: {len(key)} (переносов: {key.count(chr(10))})")
         except Exception as e:
             lines.append(f"JSON парсится: ❌ {e}")
     sh = get_sheet()
@@ -761,12 +750,7 @@ async def sheet_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     else:
         # Try to get detailed error
         try:
-            if os.path.exists("credentials.json"):
-                with open("credentials.json") as f:
-                    creds_dict = json.load(f)
-            else:
-                creds_dict = json.loads(GOOGLE_CREDENTIALS)
-            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+            creds_dict = json.loads(base64.b64decode(creds_b64).decode())
             scopes = ["https://www.googleapis.com/auth/spreadsheets"]
             from google.oauth2.service_account import Credentials as C
             import gspread as gs
