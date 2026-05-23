@@ -72,6 +72,10 @@ def get_sheet():
         if not creds_b64:
             return None
         creds_dict = json.loads(base64.b64decode(creds_b64).decode())
+        # Fix escaped newlines in private key
+        pk = creds_dict.get("private_key", "")
+        pk = pk.replace("\\n", "\n").replace("\\\\n", "\n")
+        creds_dict["private_key"] = pk
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         client = gspread.authorize(creds)
         return client.open_by_key(GOOGLE_SHEET_ID)
