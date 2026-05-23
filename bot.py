@@ -17,8 +17,8 @@ USER1 = os.environ.get("USER1", "tim")
 USER2 = os.environ.get("USER2", "masha")
 
 CATEGORIES = [
-    "🛒 Продукты", "🍽 Рестораны", "🛵 Доставка", "☕️ Кофик/Сигареты",
-    "💪 Спортзал", "🏥 Страховка", "🏠 Аренда",
+    "🛒 Продукты", "🍽 Рестораны", "🛵 Доставка", "☕️ Кофик",
+    "💪 Спорт", "🏥 Страховка", "🏠 Дом",
     "👗 Одежда", "📦 Онлайн-покупки", "🎁 Подарки", "📝 Другое",
 ]
 
@@ -323,15 +323,38 @@ async def show_savings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def show_history(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT username, amount_eur, category, description, date FROM expenses ORDER BY id DESC LIMIT 10")
+    c.execute("SELECT id, username, amount_eur, category, description, date FROM expenses ORDER BY id DESC LIMIT 10")
     rows = c.fetchall(); conn.close()
     if not rows:
         await update.message.reply_text("📭 Записей пока нет.", reply_markup=main_kb())
         return
-    lines = ["📜 *Последние 10 трат:*\n"]
-    for user, amt, cat, desc, dt in rows:
-        lines.append(f"`{dt[5:]}` {cat} — *€{amt:.0f}*  @{user}" + (f"\n    _{desc}_" if desc else ""))
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=main_kb())
+    await update.message.reply_text("📜 *Последние 10 трат:*\n_(нажми 🗑 чтобы удалить)_", parse_mode="Markdown", reply_markup=main_kb())
+    for eid, user, amt, cat, desc, dt in rows:
+        text = f"`{dt[5:]}` {cat}\n💶 €{amt:.0f}  👤 {user}" + (f"\n📝 {desc}" if desc else "")
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🗑 Удалить", callback_data=f"del_expense:{eid}")
+        ]])
+        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
+
+async def delete_expense_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    eid = int(query.data.replace("del_expense:", ""))
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT amount_eur, category, description FROM expenses WHERE id=?", (eid,))
+    row = c.fetchone()
+    if row:
+        conn.execute("DELETE FROM expenses WHERE id=?", (eid,))
+        conn.commit()
+        amt, cat, desc = row
+        await query.edit_message_text(
+            f"🗑 *Удалено:* {cat} — €{amt:.0f}" + (f"\n_{desc}_" if desc else ""),
+            parse_mode="Markdown"
+        )
+    else:
+        await query.edit_message_text("❌ Запись не найдена.")
+    conn.close()
 
 
 # ── Фикс расходы ──────────────────────────────────────────────
@@ -653,6 +676,7 @@ def main():
 
     app.add_handler(CallbackQueryHandler(debt_callback, pattern="^debt:"))
     app.add_handler(CallbackQueryHandler(analytics_callback, pattern="^(an_month:|an_compare:|an_year:|noop)"))
+    app.add_handler(CallbackQueryHandler(delete_expense_callback, pattern="^del_expense:"))
     app.add_handler(conv)
 
     print("🤖 Бот запущен!")
