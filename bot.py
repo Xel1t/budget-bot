@@ -747,6 +747,20 @@ async def sheet_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             lines.append(f"JSON error: {e}")
     sh = get_sheet()
     lines.append(f"Sheet connect: OK" if sh else "Sheet connect: FAIL")
+    if not sh:
+        import base64
+        try:
+            creds_dict = json.loads(base64.b64decode(creds_b64).decode())
+            pk = creds_dict.get("private_key", "")
+            creds_dict["private_key"] = pk.replace("\\n", "\n")
+            scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+            from google.oauth2.service_account import Credentials as C
+            import gspread as gs
+            creds = C.from_service_account_info(creds_dict, scopes=scopes)
+            client = gs.authorize(creds)
+            client.open_by_key(GOOGLE_SHEET_ID)
+        except Exception as e:
+            lines.append(f"Error: {str(e)}")
     await update.message.reply_text("\n".join(lines))
 
 
