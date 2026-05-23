@@ -263,6 +263,10 @@ async def add_desc(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     conn.commit(); conn.close()
     spent = month_expenses_eur()
     left = usd_to_eur(INCOME_USD) - FIXED_TOTAL - spent
+    inline_kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("➕ Ещё трату", callback_data="add_more"),
+        InlineKeyboardButton("🏠 Главное меню", callback_data="go_main"),
+    ]])
     await update.message.reply_text(
         f"✅ *Записано!*\n"
         f"👤 @{username}  |  {ctx.user_data['category']}\n"
@@ -270,7 +274,8 @@ async def add_desc(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         + (f"\n📝 _{desc}_" if desc else "") +
         f"\n\n📊 Потрачено: *€{c(spent)}*\n"
         f"{'🟢' if left > 0 else '🔴'} Остаток: *€{c(left)}*",
-        parse_mode="Markdown", reply_markup=main_kb()
+        parse_mode="Markdown",
+        reply_markup=inline_kb
     )
     ctx.user_data.clear()
     return MAIN_MENU
@@ -635,6 +640,24 @@ async def analytics_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=back)
 
 
+# ── После записи траты ────────────────────────────────────────
+async def after_record_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "go_main":
+        await query.edit_message_reply_markup(reply_markup=None)
+        await ctx.bot.send_message(query.message.chat_id, "🏠 Главное меню", reply_markup=main_kb())
+    elif query.data == "add_more":
+        await query.edit_message_reply_markup(reply_markup=None)
+        keyboard = [[InlineKeyboardButton(cat, callback_data=f"cat:{cat}")] for cat in CATEGORIES]
+        await ctx.bot.send_message(
+            query.message.chat_id,
+            "📂 *Выбери категорию:*",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+
+
 # ── cancel ────────────────────────────────────────────────────
 async def cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data.clear()
@@ -684,6 +707,7 @@ def main():
     app.add_handler(CallbackQueryHandler(debt_callback, pattern="^debt:"))
     app.add_handler(CallbackQueryHandler(analytics_callback, pattern="^(an_month:|an_compare:|an_year:|noop)"))
     app.add_handler(CallbackQueryHandler(delete_expense_callback, pattern="^del_expense:"))
+    app.add_handler(CallbackQueryHandler(after_record_callback, pattern="^(add_more|go_main)$"))
     app.add_handler(conv)
 
     print("🤖 Бот запущен!")
