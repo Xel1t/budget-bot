@@ -210,6 +210,7 @@ async def menu_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ── Добавить трату ────────────────────────────────────────────
 async def add_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton(cat, callback_data=f"cat:{cat}")] for cat in CATEGORIES]
+    keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="go_main")])
     await update.message.reply_text(
         "📂 *Выбери категорию:*",
         reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
@@ -645,17 +646,21 @@ async def after_record_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if query.data == "go_main":
+        ctx.user_data.clear()
         await query.edit_message_reply_markup(reply_markup=None)
         await ctx.bot.send_message(query.message.chat_id, "🏠 Главное меню", reply_markup=main_kb())
+        return MAIN_MENU
     elif query.data == "add_more":
         await query.edit_message_reply_markup(reply_markup=None)
         keyboard = [[InlineKeyboardButton(cat, callback_data=f"cat:{cat}")] for cat in CATEGORIES]
+        keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="go_main")])
         await ctx.bot.send_message(
             query.message.chat_id,
             "📂 *Выбери категорию:*",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
+        return ADD_CATEGORY
 
 
 # ── cancel ────────────────────────────────────────────────────
@@ -681,10 +686,14 @@ def main():
             MAIN_MENU: [MessageHandler(filters.Regex(menu_pattern), menu_router)],
             ADD_CATEGORY: [
                 CallbackQueryHandler(add_category_chosen, pattern="^cat:"),
+                CallbackQueryHandler(after_record_callback, pattern="^(add_more|go_main)$"),
                 MessageHandler(filters.Regex("^🔙 Главное меню$"), cancel),
             ],
             ADD_AMOUNT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, add_amount)],
-            ADD_DESC:     [MessageHandler(filters.TEXT & ~filters.COMMAND, add_desc)],
+            ADD_DESC:     [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_desc),
+                CallbackQueryHandler(after_record_callback, pattern="^(add_more|go_main)$"),
+            ],
             DEBT_WHO:     [MessageHandler(filters.TEXT & ~filters.COMMAND, debt_who)],
             DEBT_AMOUNT_S:[MessageHandler(filters.TEXT & ~filters.COMMAND, debt_amount_handler)],
             DEBT_CURRENCY:[CallbackQueryHandler(debt_currency_handler, pattern="^dcur:")],
