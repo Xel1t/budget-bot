@@ -811,6 +811,7 @@ def main():
         fallbacks=[
             CommandHandler("cancel", cancel),
             CommandHandler("start", start),
+            CommandHandler("sheetstatus", sheet_status),
             MessageHandler(filters.Regex("^🔙 Главное меню$"), cancel),
         ],
         allow_reentry=True,
