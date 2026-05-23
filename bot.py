@@ -3,7 +3,7 @@ import sqlite3
 import requests
 from datetime import datetime, date
 from calendar import monthrange
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     MessageHandler, filters, ContextTypes, ConversationHandler
@@ -18,7 +18,7 @@ USER2 = os.environ.get("USER2", "masha")
 
 CATEGORIES = [
     "🛒 Продукты", "🍽 Рестораны", "🛵 Доставка", "☕️ Кофик/Сигареты",
-    "💪 Спортзал", "🏥 Страховка", "🏠 Дом",
+    "💪 Спортзал", "🏥 Страховка", "🏠 Аренда",
     "👗 Одежда", "📦 Онлайн-покупки", "🎁 Подарки", "📝 Другое",
 ]
 
@@ -41,13 +41,13 @@ FIXED_EXPENSES = [
 FIXED_TOTAL = sum(a for _, a in FIXED_EXPENSES)
 INCOME_USD  = 3700.0
 
-# ── Conversation states ───────────────────────────────────────
 (
     MAIN_MENU,
     ADD_CATEGORY, ADD_AMOUNT, ADD_DESC,
     DEBT_WHO, DEBT_AMOUNT_S, DEBT_CURRENCY, DEBT_DESC_S,
     WALLET_CHOOSE, WALLET_OP, WALLET_AMOUNT_S,
 ) = range(11)
+
 
 # ── Keyboards ─────────────────────────────────────────────────
 def main_kb():
@@ -59,16 +59,8 @@ def main_kb():
     ], resize_keyboard=True)
 
 def back_kb():
-    return ReplyKeyboardMarkup(
-        [[KeyboardButton("🔙 Главное меню")]],
-        resize_keyboard=True
-    )
+    return ReplyKeyboardMarkup([[KeyboardButton("🔙 Главное меню")]], resize_keyboard=True)
 
-MAIN_BUTTONS = {
-    "💸 Добавить трату", "📊 Обзор", "🏦 Накопления",
-    "📈 Аналитика", "🤝 Долги", "📜 История",
-    "🏠 Фикс. расходы", "⚙️ Кошелёк",
-}
 
 # ── DB ────────────────────────────────────────────────────────
 def init_db():
@@ -97,6 +89,7 @@ def init_db():
 
 def get_db():
     return sqlite3.connect(DB_PATH)
+
 
 # ── Exchange ──────────────────────────────────────────────────
 def get_usd_to_eur() -> float:
@@ -140,12 +133,18 @@ def month_expenses_eur() -> float:
     row = c.fetchone(); conn.close()
     return row[0] or 0.0
 
-def month_by_category() -> dict:
-    today = date.today()
+def month_expenses_by(year: int, month: int) -> float:
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT SUM(amount_eur) FROM expenses WHERE date LIKE ?", (f"{year}-{month:02d}%",))
+    row = c.fetchone(); conn.close()
+    return row[0] or 0.0
+
+def month_by_category_for(year: int, month: int) -> dict:
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT category, SUM(amount_eur) FROM expenses WHERE date LIKE ? GROUP BY category",
-              (f"{today.year}-{today.month:02d}%",))
+              (f"{year}-{month:02d}%",))
     rows = c.fetchall(); conn.close()
     return {r[0]: r[1] for r in rows}
 
@@ -159,6 +158,18 @@ def total_savings_usd() -> float:
         total += amt if cur == "$" else eur_to_usd(amt)
     return round(total, 2)
 
+def month_name_ru(month: int) -> str:
+    names = ["Январь","Февраль","Март","Апрель","Май","Июнь",
+             "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"]
+    return names[month - 1]
+
+def prev_month(year, month):
+    return (year - 1, 12) if month == 1 else (year, month - 1)
+
+def next_month(year, month):
+    return (year + 1, 1) if month == 12 else (year, month + 1)
+
+
 # ── Helpers ───────────────────────────────────────────────────
 async def go_home(update: Update, text="🏠 Главное меню"):
     await update.message.reply_text(text, reply_markup=main_kb())
@@ -170,45 +181,38 @@ async def is_back(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> bool:
         return True
     return False
 
+
 # ── /start ────────────────────────────────────────────────────
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 *Привет! Я ваш семейный бюджет-бот.*\n\nВыбери действие:",
-        reply_markup=main_kb(),
-        parse_mode="Markdown"
+        reply_markup=main_kb(), parse_mode="Markdown"
     )
     return MAIN_MENU
 
-# ── Router — главное меню ─────────────────────────────────────
+
+# ── Router ────────────────────────────────────────────────────
 async def menu_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    if text == "💸 Добавить трату":
-        return await add_start(update, ctx)
-    elif text == "📊 Обзор":
-        await show_overview(update, ctx); return MAIN_MENU
-    elif text == "🏦 Накопления":
-        await show_savings(update, ctx); return MAIN_MENU
-    elif text == "📈 Аналитика":
-        await show_analytics(update, ctx); return MAIN_MENU
-    elif text == "🤝 Долги":
-        await show_debts_menu(update, ctx); return MAIN_MENU
-    elif text == "📜 История":
-        await show_history(update, ctx); return MAIN_MENU
-    elif text == "🏠 Фикс. расходы":
-        await show_fixed(update, ctx); return MAIN_MENU
-    elif text == "⚙️ Кошелёк":
-        return await wallet_start(update, ctx)
+    if text == "💸 Добавить трату":   return await add_start(update, ctx)
+    elif text == "📊 Обзор":          await show_overview(update, ctx)
+    elif text == "🏦 Накопления":     await show_savings(update, ctx)
+    elif text == "📈 Аналитика":      await show_analytics(update, ctx)
+    elif text == "🤝 Долги":          await show_debts_menu(update, ctx)
+    elif text == "📜 История":        await show_history(update, ctx)
+    elif text == "🏠 Фикс. расходы":  await show_fixed(update, ctx)
+    elif text == "⚙️ Кошелёк":        return await wallet_start(update, ctx)
     return MAIN_MENU
+
 
 # ── Добавить трату ────────────────────────────────────────────
 async def add_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton(cat, callback_data=f"cat:{cat}")] for cat in CATEGORIES]
     await update.message.reply_text(
         "📂 *Выбери категорию:*",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
+        reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
     )
-    await update.message.reply_text("Или нажми назад:", reply_markup=back_kb())
+    await update.message.reply_text("Или назад:", reply_markup=back_kb())
     return ADD_CATEGORY
 
 async def add_category_chosen(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -269,6 +273,7 @@ async def add_desc(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data.clear()
     return MAIN_MENU
 
+
 # ── Обзор ─────────────────────────────────────────────────────
 async def show_overview(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     rate = get_usd_to_eur()
@@ -291,6 +296,7 @@ async def show_overview(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown", reply_markup=main_kb()
     )
 
+
 # ── Накопления ────────────────────────────────────────────────
 async def show_savings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     conn = get_db()
@@ -312,21 +318,6 @@ async def show_savings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lines.append(f"💱 Курс: 1 USD = {rate:.4f} EUR")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=main_kb())
 
-# ── Статистика ────────────────────────────────────────────────
-async def show_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    cats = month_by_category()
-    today = date.today()
-    if not cats:
-        await update.message.reply_text("📭 Трат за этот месяц ещё нет.", reply_markup=main_kb())
-        return
-    total = sum(cats.values())
-    lines = [f"📈 *Статистика — {today.strftime('%B %Y')}*\n"]
-    for cat, amt in sorted(cats.items(), key=lambda x: -x[1]):
-        pct = amt / total * 100
-        bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
-        lines.append(f"{cat}\n`{bar}` {pct:.0f}%  €{amt:.0f}\n")
-    lines.append(f"💶 *Итого: €{total:.0f}*")
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=main_kb())
 
 # ── История ───────────────────────────────────────────────────
 async def show_history(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -342,6 +333,7 @@ async def show_history(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         lines.append(f"`{dt[5:]}` {cat} — *€{amt:.0f}*  @{user}" + (f"\n    _{desc}_" if desc else ""))
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=main_kb())
 
+
 # ── Фикс расходы ──────────────────────────────────────────────
 async def show_fixed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lines = ["🏠 *Фиксированные расходы:*\n"]
@@ -350,6 +342,7 @@ async def show_fixed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lines.append(f"\n💶 *Итого: €{FIXED_TOTAL:.0f}/мес*")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=main_kb())
 
+
 # ── Долги ─────────────────────────────────────────────────────
 async def show_debts_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     conn = get_db()
@@ -357,16 +350,11 @@ async def show_debts_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     c.execute("SELECT id, from_user, amount, currency, description, date FROM debts WHERE settled=0 ORDER BY id DESC")
     rows = c.fetchall(); conn.close()
     sym_map = {"USD": "$", "EUR": "€", "CASH_USD": "$ нал", "CASH_EUR": "€ нал"}
-
-    keyboard = [
-        [InlineKeyboardButton("➕ Записать долг", callback_data="debt:new")],
-    ]
+    keyboard = [[InlineKeyboardButton("➕ Записать долг", callback_data="debt:new")]]
     if rows:
         for rid, who, amt, cur, desc, dt in rows:
             sym = sym_map.get(cur, "")
-            label = f"#{rid} {who} — {sym}{amt:,.0f} ✅ закрыть"
-            keyboard.append([InlineKeyboardButton(label, callback_data=f"debt:settle:{rid}")])
-
+            keyboard.append([InlineKeyboardButton(f"#{rid} {who} — {sym}{amt:,.0f} ✅ закрыть", callback_data=f"debt:settle:{rid}")])
     text = "🤝 *Долги*\n\n"
     if rows:
         lines = []
@@ -376,27 +364,20 @@ async def show_debts_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         text += "\n".join(lines)
     else:
         text += "✅ Долгов нет!"
-
-    await update.message.reply_text(
-        text, parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def debt_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-
     if data == "debt:new":
         await query.edit_message_reply_markup(reply_markup=None)
         await ctx.bot.send_message(
             query.message.chat_id,
             "🤝 *Кто взял деньги?* Введи имя или @username:",
-            parse_mode="Markdown",
-            reply_markup=back_kb()
+            parse_mode="Markdown", reply_markup=back_kb()
         )
         return DEBT_WHO
-
     if data.startswith("debt:settle:"):
         debt_id = int(data.split(":")[-1])
         conn = get_db()
@@ -461,6 +442,7 @@ async def debt_desc_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data.clear()
     return MAIN_MENU
 
+
 # ── Кошелёк ───────────────────────────────────────────────────
 async def wallet_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     conn = get_db()
@@ -473,8 +455,7 @@ async def wallet_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_text(
         "🏦 *Выбери кошелёк:*",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
+        reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
     )
     await update.message.reply_text("Или назад:", reply_markup=back_kb())
     return WALLET_CHOOSE
@@ -523,124 +504,21 @@ async def wallet_amount(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data.clear()
     return MAIN_MENU
 
-# ── cancel ────────────────────────────────────────────────────
-async def cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    ctx.user_data.clear()
-    await go_home(update, "❌ Отменено.")
-    return MAIN_MENU
 
-# ── main ──────────────────────────────────────────────────────
-def main():
-    init_db()
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("start", start),
-            MessageHandler(filters.Regex("^(💸 Добавить трату|📊 Обзор|🏦 Накопления|📈 Аналитика|🤝 Долги|📜 История|🏠 Фикс. расходы|⚙️ Кошелёк)$"), menu_router),
-        ],
-        states={
-            MAIN_MENU: [
-                MessageHandler(filters.Regex("^(💸 Добавить трату|📊 Обзор|🏦 Накопления|📈 Аналитика|🤝 Долги|📜 История|🏠 Фикс. расходы|⚙️ Кошелёк)$"), menu_router),
-            ],
-            ADD_CATEGORY: [
-                CallbackQueryHandler(add_category_chosen, pattern="^cat:"),
-                MessageHandler(filters.Regex("^🔙 Главное меню$"), cancel),
-            ],
-            ADD_AMOUNT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_amount),
-            ],
-            ADD_DESC: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_desc),
-            ],
-            DEBT_WHO: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, debt_who),
-            ],
-            DEBT_AMOUNT_S: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, debt_amount_handler),
-            ],
-            DEBT_CURRENCY: [
-                CallbackQueryHandler(debt_currency_handler, pattern="^dcur:"),
-            ],
-            DEBT_DESC_S: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, debt_desc_handler),
-            ],
-            WALLET_CHOOSE: [
-                CallbackQueryHandler(wallet_chosen, pattern="^wlt:"),
-                MessageHandler(filters.Regex("^🔙 Главное меню$"), cancel),
-            ],
-            WALLET_OP: [
-                CallbackQueryHandler(wallet_op, pattern="^wop:"),
-            ],
-            WALLET_AMOUNT_S: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, wallet_amount),
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            CommandHandler("start", start),
-            MessageHandler(filters.Regex("^🔙 Главное меню$"), cancel),
-        ],
-        allow_reentry=True,
-    )
-
-    # Debt callback outside conversation (settle button)
-    app.add_handler(CallbackQueryHandler(debt_callback, pattern="^debt:"))
-    # Analytics callbacks
-    app.add_handler(CallbackQueryHandler(analytics_callback, pattern="^(an_month:|an_compare:|an_year:|noop)"))
-    app.add_handler(conv)
-
-    print("🤖 Бот запущен!")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
-
-# ═══════════════════════════════════════════════════════════════
-# АНАЛИТИКА — навигация по месяцам, сравнение, год
-# ═══════════════════════════════════════════════════════════════
-
-def month_expenses_by(year: int, month: int) -> float:
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT SUM(amount_eur) FROM expenses WHERE date LIKE ?", (f"{year}-{month:02d}%",))
-    row = c.fetchone(); conn.close()
-    return row[0] or 0.0
-
-def month_by_category_for(year: int, month: int) -> dict:
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT category, SUM(amount_eur) FROM expenses WHERE date LIKE ? GROUP BY category",
-              (f"{year}-{month:02d}%",))
-    rows = c.fetchall(); conn.close()
-    return {r[0]: r[1] for r in rows}
-
-def month_name_ru(month: int) -> str:
-    names = ["Январь","Февраль","Март","Апрель","Май","Июнь",
-             "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"]
-    return names[month - 1]
-
-def prev_month(year: int, month: int):
-    return (year - 1, 12) if month == 1 else (year, month - 1)
-
-def next_month(year: int, month: int):
-    return (year + 1, 1) if month == 12 else (year, month + 1)
-
+# ── Аналитика ─────────────────────────────────────────────────
 def analytics_nav_kb(year: int, month: int) -> InlineKeyboardMarkup:
     py, pm = prev_month(year, month)
     ny, nm = next_month(year, month)
     today = date.today()
-    buttons = [
-        InlineKeyboardButton(f"◀️ {month_name_ru(pm)[:3]}", callback_data=f"an_month:{py}:{pm}"),
-        InlineKeyboardButton(f"📅 {month_name_ru(month)} {year}", callback_data="noop"),
-    ]
+    row1 = [InlineKeyboardButton(f"◀️ {month_name_ru(pm)[:3]}", callback_data=f"an_month:{py}:{pm}")]
+    row1.append(InlineKeyboardButton(f"📅 {month_name_ru(month)[:3]} {year}", callback_data="noop"))
     if (ny, nm) <= (today.year, today.month):
-        buttons.append(InlineKeyboardButton(f"{month_name_ru(nm)[:3]} ▶️", callback_data=f"an_month:{ny}:{nm}"))
+        row1.append(InlineKeyboardButton(f"{month_name_ru(nm)[:3]} ▶️", callback_data=f"an_month:{ny}:{nm}"))
     row2 = [
-        InlineKeyboardButton("⚖️ Сравнить с пред. месяцем", callback_data=f"an_compare:{year}:{month}"),
+        InlineKeyboardButton("⚖️ Сравнить с пред.", callback_data=f"an_compare:{year}:{month}"),
         InlineKeyboardButton("📆 Год", callback_data=f"an_year:{year}"),
     ]
-    return InlineKeyboardMarkup([buttons, row2])
+    return InlineKeyboardMarkup([row1, row2])
 
 def format_month_stats(year: int, month: int) -> str:
     cats = month_by_category_for(year, month)
@@ -659,17 +537,14 @@ def format_month_stats(year: int, month: int) -> str:
         lines.append("📭 Трат нет")
     return "\n".join(lines)
 
-# ── Показать аналитику за месяц (команда из меню) ─────────────
 async def show_analytics(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     today = date.today()
-    year, month = today.year, today.month
-    text = format_month_stats(year, month)
+    text = format_month_stats(today.year, today.month)
     await update.message.reply_text(
         text, parse_mode="Markdown",
-        reply_markup=analytics_nav_kb(year, month)
+        reply_markup=analytics_nav_kb(today.year, today.month)
     )
 
-# ── Callback: переключение месяца ─────────────────────────────
 async def analytics_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -681,9 +556,8 @@ async def analytics_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data.startswith("an_month:"):
         _, year, month = data.split(":")
         year, month = int(year), int(month)
-        text = format_month_stats(year, month)
         await query.edit_message_text(
-            text, parse_mode="Markdown",
+            format_month_stats(year, month), parse_mode="Markdown",
             reply_markup=analytics_nav_kb(year, month)
         )
 
@@ -691,57 +565,98 @@ async def analytics_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         _, year, month = data.split(":")
         year, month = int(year), int(month)
         py, pm = prev_month(year, month)
-
         cats_cur  = month_by_category_for(year, month)
         cats_prev = month_by_category_for(py, pm)
         total_cur  = sum(cats_cur.values())  if cats_cur  else 0.0
         total_prev = sum(cats_prev.values()) if cats_prev else 0.0
         diff = total_cur - total_prev
-        diff_sym = "📈" if diff > 0 else "📉"
-
         all_cats = set(list(cats_cur.keys()) + list(cats_prev.keys()))
-        lines = [
-            f"⚖️ *Сравнение*\n",
-            f"{'Категория':<22} {month_name_ru(pm)[:3]:>6}  {month_name_ru(month)[:3]:>6}  {'±':>6}\n",
-        ]
+        lines = [f"⚖️ *{month_name_ru(pm)[:3]} vs {month_name_ru(month)[:3]} {year}*\n"]
         for cat in sorted(all_cats):
             a = cats_prev.get(cat, 0.0)
             b = cats_cur.get(cat, 0.0)
             delta = b - a
+            short = cat.split(" ", 1)[-1][:12]
             sign = "+" if delta > 0 else ""
-            # trim cat emoji+name to fit
-            short = cat.split(" ", 1)[-1][:14]
-            lines.append(f"`{short:<14}` €{a:>5.0f}  €{b:>5.0f}  {sign}{delta:>+.0f}")
-
+            lines.append(f"`{short:<12}` €{a:>5.0f} → €{b:>5.0f}  {sign}{delta:.0f}")
         lines.append(f"\n💶 *{month_name_ru(pm)}: €{total_prev:.0f}*")
         lines.append(f"💶 *{month_name_ru(month)}: €{total_cur:.0f}*")
-        lines.append(f"{diff_sym} Разница: *{'+' if diff>0 else ''}{diff:.0f} €*")
-
-        back_kb_inline = InlineKeyboardMarkup([[
-            InlineKeyboardButton("◀️ Назад", callback_data=f"an_month:{year}:{month}")
-        ]])
-        await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=back_kb_inline)
+        lines.append(f"{'📈' if diff > 0 else '📉'} Разница: *{'+' if diff>0 else ''}{diff:.0f} €*")
+        back = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data=f"an_month:{year}:{month}")]])
+        await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=back)
 
     elif data.startswith("an_year:"):
         _, year = data.split(":")
         year = int(year)
+        income_eur = usd_to_eur(INCOME_USD)
         lines = [f"📆 *Годовой обзор — {year}*\n"]
         grand = 0.0
-        income_eur = usd_to_eur(INCOME_USD)
         for m in range(1, 13):
             total = month_expenses_by(year, m)
             grand += total
             if total > 0:
                 saved = income_eur - FIXED_TOTAL - total
-                bar_len = min(int(total / 200), 15)
-                bar = "█" * bar_len
+                bar = "█" * min(int(total / 200), 15)
                 lines.append(f"`{month_name_ru(m)[:3]}` `{bar:<15}` €{total:.0f}  {'🟢' if saved>0 else '🔴'}€{abs(saved):.0f}")
             else:
                 lines.append(f"`{month_name_ru(m)[:3]}` —")
-        lines.append(f"\n💶 *Итого за год: €{grand:.0f}*")
-        lines.append(f"📊 Среднее/мес: *€{grand/12:.0f}*")
+        lines.append(f"\n💶 *Итого: €{grand:.0f}*  |  Среднее: *€{grand/12:.0f}/мес*")
+        back = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data=f"an_month:{year}:{date.today().month}")]])
+        await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=back)
 
-        back_kb_inline = InlineKeyboardMarkup([[
-            InlineKeyboardButton("◀️ Назад", callback_data=f"an_month:{year}:{date.today().month}")
-        ]])
-        await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=back_kb_inline)
+
+# ── cancel ────────────────────────────────────────────────────
+async def cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data.clear()
+    await go_home(update, "❌ Отменено.")
+    return MAIN_MENU
+
+
+# ── main ──────────────────────────────────────────────────────
+def main():
+    init_db()
+    app = Application.builder().token(BOT_TOKEN).build()
+
+    menu_pattern = "^(💸 Добавить трату|📊 Обзор|🏦 Накопления|📈 Аналитика|🤝 Долги|📜 История|🏠 Фикс. расходы|⚙️ Кошелёк)$"
+
+    conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("start", start),
+            MessageHandler(filters.Regex(menu_pattern), menu_router),
+        ],
+        states={
+            MAIN_MENU: [MessageHandler(filters.Regex(menu_pattern), menu_router)],
+            ADD_CATEGORY: [
+                CallbackQueryHandler(add_category_chosen, pattern="^cat:"),
+                MessageHandler(filters.Regex("^🔙 Главное меню$"), cancel),
+            ],
+            ADD_AMOUNT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, add_amount)],
+            ADD_DESC:     [MessageHandler(filters.TEXT & ~filters.COMMAND, add_desc)],
+            DEBT_WHO:     [MessageHandler(filters.TEXT & ~filters.COMMAND, debt_who)],
+            DEBT_AMOUNT_S:[MessageHandler(filters.TEXT & ~filters.COMMAND, debt_amount_handler)],
+            DEBT_CURRENCY:[CallbackQueryHandler(debt_currency_handler, pattern="^dcur:")],
+            DEBT_DESC_S:  [MessageHandler(filters.TEXT & ~filters.COMMAND, debt_desc_handler)],
+            WALLET_CHOOSE:[
+                CallbackQueryHandler(wallet_chosen, pattern="^wlt:"),
+                MessageHandler(filters.Regex("^🔙 Главное меню$"), cancel),
+            ],
+            WALLET_OP:    [CallbackQueryHandler(wallet_op, pattern="^wop:")],
+            WALLET_AMOUNT_S:[MessageHandler(filters.TEXT & ~filters.COMMAND, wallet_amount)],
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CommandHandler("start", start),
+            MessageHandler(filters.Regex("^🔙 Главное меню$"), cancel),
+        ],
+        allow_reentry=True,
+    )
+
+    app.add_handler(CallbackQueryHandler(debt_callback, pattern="^debt:"))
+    app.add_handler(CallbackQueryHandler(analytics_callback, pattern="^(an_month:|an_compare:|an_year:|noop)"))
+    app.add_handler(conv)
+
+    print("🤖 Бот запущен!")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
