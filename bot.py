@@ -330,19 +330,18 @@ async def show_history(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not rows:
         await update.message.reply_text("📭 Записей пока нет.", reply_markup=main_kb())
         return
-    await update.message.reply_text("📜 *Последние 10 трат:*\n_нажми 🗑 чтобы удалить_", parse_mode="Markdown", reply_markup=main_kb())
+    await update.message.reply_text("📜 *Последние 10 трат:*\nНажми 🗑 чтобы удалить", parse_mode="Markdown", reply_markup=main_kb())
     for eid, user, amt, cat, desc, dt in rows:
-        try:
-            date_str = dt[5:10] if dt else "??-??"
-            user_str = f"@{user}" if user else "неизвестно"
-            desc_str = f"\n📝 {desc}" if desc else ""
-            text = f"`{date_str}` {cat}\n💶 €{c(amt)}  👤 {user_str}{desc_str}"
-            keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("🗑 Удалить", callback_data=f"del_expense:{eid}")
-            ]])
-            await update.message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
-        except Exception:
-            continue
+        date_str = dt[5:10] if dt else "??-??"
+        user_str = user or "неизвестно"
+        amt_str = str(c(amt))
+        cat_str = cat or "—"
+        desc_str = f"\n📝 {desc}" if desc else ""
+        text = f"{date_str} | {cat_str}\n💶 €{amt_str}  👤 @{user_str}{desc_str}"
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🗑 Удалить", callback_data=f"del_expense:{eid}")
+        ]])
+        await update.message.reply_text(text, reply_markup=keyboard)
 
 async def delete_expense_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
