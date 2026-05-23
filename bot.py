@@ -63,15 +63,19 @@ GOOGLE_CREDENTIALS = os.environ.get("GOOGLE_CREDENTIALS", "")
 
 # ── Google Sheets ──────────────────────────────────────────────
 def get_sheet():
-    if not GSPREAD_AVAILABLE or not GOOGLE_CREDENTIALS:
+    if not GSPREAD_AVAILABLE:
         return None
     try:
-        creds_dict = json.loads(GOOGLE_CREDENTIALS)
-        # Fix private key newlines that get escaped when stored as env var
-        if "private_key" in creds_dict:
-            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        # Try file first, then env var
+        if os.path.exists("credentials.json"):
+            creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
+        elif GOOGLE_CREDENTIALS:
+            creds_dict = json.loads(GOOGLE_CREDENTIALS)
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+            creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        else:
+            return None
         client = gspread.authorize(creds)
         return client.open_by_key(GOOGLE_SHEET_ID)
     except Exception as e:
