@@ -268,14 +268,18 @@ async def add_desc(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("➕ Ещё трату", callback_data="add_more"),
         InlineKeyboardButton("🏠 Главное меню", callback_data="go_main"),
     ]])
+    cat = ctx.user_data['category']
+    amt = ctx.user_data['amount_eur']
+    note = ctx.user_data.get('amount_note', '')
+    desc_line = f"\n📝 {desc}" if desc else ""
+    icon = "🟢" if left > 0 else "🔴"
     await update.message.reply_text(
-        f"✅ *Записано!*\n"
-        f"👤 @{username}  |  {ctx.user_data['category']}\n"
-        f"💶 €{ctx.user_data['amount_eur']}{ctx.user_data.get('amount_note','')}"
-        + (f"\n📝 _{desc}_" if desc else "") +
-        f"\n\n📊 Потрачено: *€{c(spent)}*\n"
-        f"{'🟢' if left > 0 else '🔴'} Остаток: *€{c(left)}*",
-        parse_mode="Markdown",
+        f"✅ Записано!\n"
+        f"👤 @{username}  |  {cat}\n"
+        f"💶 €{amt}{note}"
+        f"{desc_line}\n\n"
+        f"📊 Потрачено: €{c(spent)}\n"
+        f"{icon} Остаток: €{c(left)}",
         reply_markup=inline_kb
     )
     ctx.user_data.clear()
