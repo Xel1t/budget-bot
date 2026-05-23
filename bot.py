@@ -724,42 +724,26 @@ async def after_record_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ── /sheetstatus ──────────────────────────────────────────────
 async def sheet_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    lines = ["🔍 *Диагностика Google Sheets:*\n"]
     import base64
     creds_b64 = os.environ.get("GOOGLE_CREDENTIALS_B64", "")
-    lines.append(f"gspread доступен: {'✅' if GSPREAD_AVAILABLE else '❌'}")
-    lines.append(f"GOOGLE_CREDENTIALS_B64: {'✅ есть' if creds_b64 else '❌ пусто'}")
-    lines.append(f"GOOGLE_SHEET_ID: `{GOOGLE_SHEET_ID}`")
+    lines = ["Диагностика Google Sheets:\n"]
+    lines.append(f"gspread: OK" if GSPREAD_AVAILABLE else "gspread: NO")
+    lines.append(f"CREDENTIALS_B64: OK" if creds_b64 else "CREDENTIALS_B64: EMPTY")
+    lines.append(f"SHEET_ID: {GOOGLE_SHEET_ID}")
     if creds_b64:
         try:
-            creds_dict = json.loads(base64.b64decode(creds_b64).decode())
-            lines.append(f"JSON парсится: ✅")
-            lines.append(f"client_email: `{creds_dict.get('client_email', '?')}`")
+            decoded = base64.b64decode(creds_b64).decode()
+            creds_dict = json.loads(decoded)
             key = creds_dict.get("private_key", "")
-            lines.append(f"Длина ключа: {len(key)} (переносов: {key.count(chr(10))})")
+            lines.append(f"JSON: OK")
+            lines.append(f"email: {creds_dict.get('client_email', '?')}")
+            lines.append(f"key len: {len(key)}, newlines: {key.count(chr(10))}")
+            lines.append(f"key start: {repr(key[:50])}")
         except Exception as e:
-            lines.append(f"JSON парсится: ❌ {e}")
+            lines.append(f"JSON error: {e}")
     sh = get_sheet()
-    if sh:
-        try:
-            ws = sh.sheet1
-            lines.append(f"Подключение к таблице: ✅")
-            lines.append(f"Лист: {ws.title}, строк: {ws.row_count}")
-        except Exception as e:
-            lines.append(f"Подключение к таблице: ❌ {e}")
-    else:
-        # Try to get detailed error
-        try:
-            creds_dict = json.loads(base64.b64decode(creds_b64).decode())
-            scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-            from google.oauth2.service_account import Credentials as C
-            import gspread as gs
-            creds = C.from_service_account_info(creds_dict, scopes=scopes)
-            client = gs.authorize(creds)
-            client.open_by_key(GOOGLE_SHEET_ID)
-        except Exception as e:
-            lines.append(f"Подключение к таблице: ❌\nОшибка: `{str(e)[:200]}`")
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    lines.append(f"Sheet connect: OK" if sh else "Sheet connect: FAIL")
+    await update.message.reply_text("\n".join(lines))
 
 
 # ── cancel ────────────────────────────────────────────────────
@@ -817,6 +801,7 @@ def main():
         allow_reentry=True,
     )
 
+    app.add_handler(CommandHandler("ping", lambda u, c: u.message.reply_text("pong")))
     app.add_handler(CommandHandler("sheetstatus", sheet_status))
     app.add_handler(CallbackQueryHandler(debt_callback, pattern="^debt:"))
     app.add_handler(CallbackQueryHandler(analytics_callback, pattern="^(an_month:|an_compare:|an_year:|noop)"))
