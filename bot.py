@@ -21,23 +21,23 @@ except ImportError:
 DB_PATH = os.environ.get("DB_PATH", "budget.db")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 EXCHANGE_API_KEY = os.environ.get("EXCHANGE_API_KEY", "")
-
 USER1 = os.environ.get("USER1", "tim")
 USER2 = os.environ.get("USER2", "masha")
 
 CATEGORIES = [
     "🛒 Продукты", "🍽 Рестораны", "🛵 Доставка", "☕️ Кофик/Сигареты",
     "💪 Спорт", "🏥 Страховка", "🏠 Дом",
+    "🧴 Бытовая химия", "🐩 Чуи",
     "👗 Одежда", "📦 Онлайн-покупки", "🎁 Подарки", "📝 Другое",
 ]
 
 WALLETS_DEFAULT = [
-    ("нз_брат",    "НЗ у брата",       "$",  6000.0),
-    ("крипто_хол", "Крипто холодный",  "$",  3000.0),
-    ("крипто_теп", "Крипто тёплый",    "$",  1500.0),
-    ("оборот",     "В обороте",        "$",  4000.0),
-    ("нал_usd",    "Наличка $",        "$",  0.0),
-    ("нал_eur",    "Наличка €",        "€",  0.0),
+    ("нз_брат",   "НЗ у брата",       "$", 6000.0),
+    ("крипто_хол","Крипто холодный",  "$", 3000.0),
+    ("крипто_теп","Крипто тёплый",    "$", 1500.0),
+    ("оборот",    "В обороте",        "$", 4000.0),
+    ("нал_usd",   "Наличка $",        "$", 0.0),
+    ("нал_eur",   "Наличка €",        "€", 0.0),
 ]
 
 FIXED_EXPENSES = [
@@ -50,26 +50,30 @@ FIXED_EXPENSES = [
 FIXED_TOTAL = sum(a for _, a in FIXED_EXPENSES)
 INCOME_USD  = 3700.0
 
-GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "1pke7JzLELpxgvkcRwHCUcYRWKvP4YFhyjqSSv5eE6WU")
+GOOGLE_SHEET_ID  = os.environ.get("GOOGLE_SHEET_ID", "1pke7JzLELpxgvkcRwHCUcYRWKvP4YFhyjqSSv5eE6WU")
 GOOGLE_CREDENTIALS = os.environ.get("GOOGLE_CREDENTIALS", "")
 
+# ── States ────────────────────────────────────────────────────
 (
     MAIN_MENU,
     ADD_CATEGORY, ADD_AMOUNT, ADD_DESC,
-    DEBT_WHO, DEBT_AMOUNT_S, DEBT_CURRENCY, DEBT_DESC_S,
+    # Долги — новая расширенная цепочка
+    DEBT_TYPE,       # между нами / с чужими
+    DEBT_DIRECTION,  # мне должны / я должен
+    DEBT_WHO,        # имя
+    DEBT_AMOUNT_S,
+    DEBT_CURRENCY,
+    DEBT_DESC_S,
+    # Кошелёк
     WALLET_CHOOSE, WALLET_OP, WALLET_AMOUNT_S,
-) = range(11)
-
+) = range(13)
 
 # ── Google Sheets ──────────────────────────────────────────────
 def get_sheet():
     if not GSPREAD_AVAILABLE:
         return None
     try:
-        import base64
         scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-
-        # Build credentials dict directly
         creds_dict = {
             "type": "service_account",
             "project_id": "mystic-song-468921-r7",
@@ -112,7 +116,6 @@ def get_sheet():
             "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/budgetbotv2%40mystic-song-468921-r7.iam.gserviceaccount.com",
             "universe_domain": "googleapis.com"
         }
-
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         client = gspread.authorize(creds)
         return client.open_by_key(GOOGLE_SHEET_ID)
@@ -121,7 +124,6 @@ def get_sheet():
         return None
 
 def sheets_init_headers():
-    """Create headers if sheet is empty."""
     try:
         sh = get_sheet()
         if not sh: return
@@ -132,30 +134,46 @@ def sheets_init_headers():
     except Exception as e:
         print(f"Sheets init error: {e}")
 
-def sheets_add_expense(username: str, amount_eur: float, category: str, description: str, dt: str):
-    """Append a new expense row to Google Sheets."""
+def sheets_add_expense(username, amount_eur, category, description, dt):
     try:
         sh = get_sheet()
         if not sh: return
         ws = sh.sheet1
-        month = dt[:7]  # YYYY-MM
+        month = dt[:7]
         ws.append_row([dt, f"@{username}", category, amount_eur, description or "", month])
     except Exception as e:
         print(f"Sheets append error: {e}")
 
+def sheets_delete_expense(expense_id: int, dt: str, username: str, category: str, amount_eur: float):
+    """Удалить строку из Google Sheets по совпадению даты/пользователя/категории/суммы."""
+    try:
+        sh = get_sheet()
+        if not sh: return
+        ws = sh.sheet1
+        all_rows = ws.get_all_values()
+        # Ищем строку (пропускаем заголовок)
+        for i, row in enumerate(all_rows[1:], start=2):
+            if (len(row) >= 4
+                    and row[0] == dt
+                    and row[1] == f"@{username}"
+                    and row[2] == category
+                    and abs(float(row[3] or 0) - amount_eur) < 0.01):
+                ws.delete_rows(i)
+                return
+    except Exception as e:
+        print(f"Sheets delete error: {e}")
 
 # ── Keyboards ─────────────────────────────────────────────────
 def main_kb():
     return ReplyKeyboardMarkup([
-        [KeyboardButton("💸 Добавить трату"),  KeyboardButton("📊 Обзор")],
-        [KeyboardButton("🏦 Накопления"),       KeyboardButton("📈 Аналитика")],
-        [KeyboardButton("🤝 Долги"),            KeyboardButton("📜 История")],
-        [KeyboardButton("🏠 Фикс. расходы"),   KeyboardButton("⚙️ Кошелёк")],
+        [KeyboardButton("💸 Добавить трату"), KeyboardButton("📊 Обзор")],
+        [KeyboardButton("🏦 Накопления"),     KeyboardButton("📈 Аналитика")],
+        [KeyboardButton("🤝 Долги"),          KeyboardButton("📜 История")],
+        [KeyboardButton("🏠 Фикс. расходы"), KeyboardButton("⚙️ Кошелёк")],
     ], resize_keyboard=True)
 
 def back_kb():
     return ReplyKeyboardMarkup([[KeyboardButton("🔙 Главное меню")]], resize_keyboard=True)
-
 
 # ── DB ────────────────────────────────────────────────────────
 def init_db():
@@ -168,9 +186,18 @@ def init_db():
     )''')
     cur.execute('''CREATE TABLE IF NOT EXISTS debts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        debt_type TEXT DEFAULT 'external',
+        direction TEXT DEFAULT 'they_owe',
         from_user TEXT, amount REAL, currency TEXT,
         description TEXT, date TEXT, settled INTEGER DEFAULT 0
     )''')
+    # Добавляем колонки если их ещё нет (миграция)
+    try:
+        cur.execute("ALTER TABLE debts ADD COLUMN debt_type TEXT DEFAULT 'external'")
+    except: pass
+    try:
+        cur.execute("ALTER TABLE debts ADD COLUMN direction TEXT DEFAULT 'they_owe'")
+    except: pass
     cur.execute('''CREATE TABLE IF NOT EXISTS wallets (
         key TEXT PRIMARY KEY, label TEXT, currency TEXT, amount REAL
     )''')
@@ -178,24 +205,21 @@ def init_db():
         pair TEXT PRIMARY KEY, rate REAL, updated TEXT
     )''')
     for w_key, w_label, w_currency, w_amount in WALLETS_DEFAULT:
-        cur.execute("INSERT OR IGNORE INTO wallets VALUES (?,?,?,?)", (w_key, w_label, w_currency, w_amount))
+        cur.execute("INSERT OR IGNORE INTO wallets VALUES (?,?,?,?)",
+                    (w_key, w_label, w_currency, w_amount))
     conn.commit()
     conn.close()
 
 def get_db():
     return sqlite3.connect(DB_PATH)
 
-
 # ── Exchange ──────────────────────────────────────────────────
 def get_usd_to_eur() -> float:
-    conn = get_db()
-    cur = conn.cursor()
+    conn = get_db(); cur = conn.cursor()
     cur.execute("SELECT rate, updated FROM exchange_cache WHERE pair='USD_EUR'")
-    row = cur.fetchone()
-    conn.close()
-    if row:
-        if (datetime.now() - datetime.fromisoformat(row[1])).seconds < 3600:
-            return row[0]
+    row = cur.fetchone(); conn.close()
+    if row and (datetime.now() - datetime.fromisoformat(row[1])).seconds < 3600:
+        return row[0]
     try:
         if EXCHANGE_API_KEY:
             r = requests.get(f"https://v6.exchangerate-api.com/v6/{EXCHANGE_API_KEY}/pair/USD/EUR", timeout=5).json()
@@ -206,55 +230,52 @@ def get_usd_to_eur() -> float:
         conn = get_db()
         conn.execute("INSERT OR REPLACE INTO exchange_cache VALUES ('USD_EUR',?,?)",
                      (rate, datetime.now().isoformat()))
-        conn.commit()
-        conn.close()
+        conn.commit(); conn.close()
         return rate
-    except Exception:
+    except:
         return 0.92
 
 def usd_to_eur(usd): return round(usd * get_usd_to_eur(), 2)
-def c(x): return math.ceil(x)  # always round up for display
 def eur_to_usd(eur):
     r = get_usd_to_eur()
     return round(eur / r, 2) if r else round(eur / 0.92, 2)
+def c(x): return math.ceil(x)
 
 def get_username(update: Update) -> str:
     return (update.effective_user.username or update.effective_user.first_name or "unknown").lower()
 
 def month_expenses_eur() -> float:
     today = date.today()
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT SUM(amount_eur) FROM expenses WHERE date LIKE ?", (f"{today.year}-{today.month:02d}%",))
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT SUM(amount_eur) FROM expenses WHERE date LIKE ?",
+                (f"{today.year}-{today.month:02d}%",))
     row = cur.fetchone(); conn.close()
     return row[0] or 0.0
 
-def month_expenses_by(year: int, month: int) -> float:
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT SUM(amount_eur) FROM expenses WHERE date LIKE ?", (f"{year}-{month:02d}%",))
+def month_expenses_by(year, month) -> float:
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT SUM(amount_eur) FROM expenses WHERE date LIKE ?",
+                (f"{year}-{month:02d}%",))
     row = cur.fetchone(); conn.close()
     return row[0] or 0.0
 
-def month_by_category_for(year: int, month: int) -> dict:
-    conn = get_db()
-    cur = conn.cursor()
+def month_by_category_for(year, month) -> dict:
+    conn = get_db(); cur = conn.cursor()
     cur.execute("SELECT category, SUM(amount_eur) FROM expenses WHERE date LIKE ? GROUP BY category",
-              (f"{year}-{month:02d}%",))
+                (f"{year}-{month:02d}%",))
     rows = cur.fetchall(); conn.close()
     return {r[0]: r[1] for r in rows}
 
 def total_savings_usd() -> float:
-    conn = get_db()
-    cur = conn.cursor()
+    conn = get_db(); cur = conn.cursor()
     cur.execute("SELECT currency, amount FROM wallets")
     rows = cur.fetchall(); conn.close()
     total = 0.0
-    for cur, amt in rows:
-        total += amt if cur == "$" else eur_to_usd(amt)
+    for cur_, amt in rows:
+        total += amt if cur_ == "$" else eur_to_usd(amt)
     return round(total, 2)
 
-def month_name_ru(month: int) -> str:
+def month_name_ru(month):
     names = ["Январь","Февраль","Март","Апрель","Май","Июнь",
              "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"]
     return names[month - 1]
@@ -264,7 +285,6 @@ def prev_month(year, month):
 
 def next_month(year, month):
     return (year + 1, 1) if month == 12 else (year, month + 1)
-
 
 # ── Helpers ───────────────────────────────────────────────────
 async def go_home(update: Update, text="🏠 Главное меню"):
@@ -277,7 +297,6 @@ async def is_back(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> bool:
         return True
     return False
 
-
 # ── /start ────────────────────────────────────────────────────
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -286,20 +305,18 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     return MAIN_MENU
 
-
 # ── Router ────────────────────────────────────────────────────
 async def menu_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    if text == "💸 Добавить трату":   return await add_start(update, ctx)
-    elif text == "📊 Обзор":          await show_overview(update, ctx)
-    elif text == "🏦 Накопления":     await show_savings(update, ctx)
-    elif text == "📈 Аналитика":      await show_analytics(update, ctx)
-    elif text == "🤝 Долги":          await show_debts_menu(update, ctx)
-    elif text == "📜 История":        await show_history(update, ctx)
+    if   text == "💸 Добавить трату":  return await add_start(update, ctx)
+    elif text == "📊 Обзор":           await show_overview(update, ctx)
+    elif text == "🏦 Накопления":      await show_savings(update, ctx)
+    elif text == "📈 Аналитика":       await show_analytics(update, ctx)
+    elif text == "🤝 Долги":           return await debts_start(update, ctx)
+    elif text == "📜 История":         await show_history(update, ctx)
     elif text == "🏠 Фикс. расходы":  await show_fixed(update, ctx)
     elif text == "⚙️ Кошелёк":        return await wallet_start(update, ctx)
     return MAIN_MENU
-
 
 # ── Добавить трату ────────────────────────────────────────────
 async def add_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -350,29 +367,27 @@ async def add_desc(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     desc = update.message.text.strip()
     if desc == "-": desc = ""
     username = get_username(update)
+    today_str = date.today().isoformat()
     conn = get_db()
     conn.execute(
         "INSERT INTO expenses (username, amount_eur, category, description, date) VALUES (?,?,?,?,?)",
-        (username, ctx.user_data["amount_eur"], ctx.user_data["category"], desc, date.today().isoformat())
+        (username, ctx.user_data["amount_eur"], ctx.user_data["category"], desc, today_str)
     )
     conn.commit(); conn.close()
-    # Sync to Google Sheets
-    sheets_add_expense(username, ctx.user_data["amount_eur"], ctx.user_data["category"], desc, date.today().isoformat())
+    sheets_add_expense(username, ctx.user_data["amount_eur"], ctx.user_data["category"], desc, today_str)
+
     spent = month_expenses_eur()
-    left = usd_to_eur(INCOME_USD) - FIXED_TOTAL - spent
+    left  = usd_to_eur(INCOME_USD) - FIXED_TOTAL - spent
     inline_kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("➕ Ещё трату", callback_data="add_more"),
         InlineKeyboardButton("🏠 Главное меню", callback_data="go_main"),
     ]])
-    cat = ctx.user_data['category']
-    amt = ctx.user_data['amount_eur']
-    note = ctx.user_data.get('amount_note', '')
-    desc_line = f"\n📝 {desc}" if desc else ""
     icon = "🟢" if left > 0 else "🔴"
+    desc_line = f"\n📝 {desc}" if desc else ""
     await update.message.reply_text(
         f"✅ Записано!\n"
-        f"👤 @{username}  |  {cat}\n"
-        f"💶 €{amt}{note}"
+        f"👤 @{username} | {ctx.user_data['category']}\n"
+        f"💶 €{ctx.user_data['amount_eur']}{ctx.user_data.get('amount_note','')}"
         f"{desc_line}\n\n"
         f"📊 Потрачено: €{c(spent)}\n"
         f"{icon} Остаток: €{c(left)}",
@@ -381,13 +396,12 @@ async def add_desc(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data.clear()
     return MAIN_MENU
 
-
 # ── Обзор ─────────────────────────────────────────────────────
 async def show_overview(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     rate = get_usd_to_eur()
     income_eur = usd_to_eur(INCOME_USD)
     spent = month_expenses_eur()
-    left = income_eur - FIXED_TOTAL - spent
+    left  = income_eur - FIXED_TOTAL - spent
     today = date.today()
     days_left = monthrange(today.year, today.month)[1] - today.day
     daily = left / days_left if days_left > 0 else 0
@@ -404,46 +418,41 @@ async def show_overview(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown", reply_markup=main_kb()
     )
 
-
 # ── Накопления ────────────────────────────────────────────────
 async def show_savings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    conn = get_db()
-    cur = conn.cursor()
+    conn = get_db(); cur = conn.cursor()
     cur.execute("SELECT key, label, currency, amount FROM wallets")
     rows = cur.fetchall(); conn.close()
     rate = get_usd_to_eur()
     lines = ["🏦 *Накопления по кошелькам:*\n"]
     total_usd = 0.0
-    for _, label, cur, amt in rows:
-        if cur == "$":
+    for _, label, cur_, amt in rows:
+        if cur_ == "$":
             equiv = f"≈ €{usd_to_eur(amt):,.0f}"
             total_usd += amt
         else:
             equiv = f"≈ ${eur_to_usd(amt):,.0f}"
             total_usd += eur_to_usd(amt)
-        lines.append(f"• {label}: *{cur}{amt:,.0f}*  {equiv}")
+        lines.append(f"• {label}: *{cur_}{amt:,.0f}* {equiv}")
     lines.append(f"\n💰 *Всего: ~${total_usd:,.0f}* ≈ *€{usd_to_eur(total_usd):,.0f}*")
     lines.append(f"💱 Курс: 1 USD = {rate:.4f} EUR")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=main_kb())
 
-
 # ── История ───────────────────────────────────────────────────
 async def show_history(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    conn = get_db()
-    cur = conn.cursor()
+    conn = get_db(); cur = conn.cursor()
     cur.execute("SELECT id, username, amount_eur, category, description, date FROM expenses ORDER BY id DESC LIMIT 10")
     rows = cur.fetchall(); conn.close()
     if not rows:
         await update.message.reply_text("📭 Записей пока нет.", reply_markup=main_kb())
         return
-    await update.message.reply_text("📜 *Последние 10 трат:*\nНажми 🗑 чтобы удалить", parse_mode="Markdown", reply_markup=main_kb())
+    await update.message.reply_text(
+        "📜 *Последние 10 трат:*\nНажми 🗑 чтобы удалить",
+        parse_mode="Markdown", reply_markup=main_kb()
+    )
     for eid, user, amt, cat, desc, dt in rows:
         date_str = dt[5:10] if dt else "??-??"
-        user_str = user or "неизвестно"
-        amt_str = str(c(amt))
-        cat_str = cat or "—"
-        desc_str = f"\n📝 {desc}" if desc else ""
-        text = f"{date_str} | {cat_str}\n💶 €{amt_str}  👤 @{user_str}{desc_str}"
+        text = f"{date_str} | {cat}\n💶 €{c(amt)} 👤 @{user or '—'}" + (f"\n📝 {desc}" if desc else "")
         keyboard = InlineKeyboardMarkup([[
             InlineKeyboardButton("🗑 Удалить", callback_data=f"del_expense:{eid}")
         ]])
@@ -453,14 +462,15 @@ async def delete_expense_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     eid = int(query.data.replace("del_expense:", ""))
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT amount_eur, category, description FROM expenses WHERE id=?", (eid,))
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT amount_eur, category, description, username, date FROM expenses WHERE id=?", (eid,))
     row = cur.fetchone()
     if row:
         conn.execute("DELETE FROM expenses WHERE id=?", (eid,))
         conn.commit()
-        amt, cat, desc = row
+        amt, cat, desc, username, dt = row
+        # ← Удаляем и из Google Sheets
+        sheets_delete_expense(eid, dt, username or "", cat, amt)
         await query.edit_message_text(
             f"🗑 *Удалено:* {cat} — €{c(amt)}" + (f"\n_{desc}_" if desc else ""),
             parse_mode="Markdown"
@@ -468,7 +478,6 @@ async def delete_expense_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE
     else:
         await query.edit_message_text("❌ Запись не найдена.")
     conn.close()
-
 
 # ── Фикс расходы ──────────────────────────────────────────────
 async def show_fixed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -478,60 +487,151 @@ async def show_fixed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lines.append(f"\n💶 *Итого: €{c(FIXED_TOTAL)}/мес*")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=main_kb())
 
+# ══════════════════════════════════════════════════════════════
+# ── ДОЛГИ — полностью переписано ─────────────────────────────
+# ══════════════════════════════════════════════════════════════
 
-# ── Долги ─────────────────────────────────────────────────────
-async def show_debts_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT id, from_user, amount, currency, description, date FROM debts WHERE settled=0 ORDER BY id DESC")
-    rows = cur.fetchall(); conn.close()
-    sym_map = {"USD": "$", "EUR": "€", "CASH_USD": "$ нал", "CASH_EUR": "€ нал"}
-    keyboard = [[InlineKeyboardButton("➕ Записать долг", callback_data="debt:new")]]
-    if rows:
-        for rid, who, amt, cur, desc, dt in rows:
-            sym = sym_map.get(cur, "")
-            keyboard.append([InlineKeyboardButton(f"#{rid} {who} — {sym}{amt:,.0f} ✅ закрыть", callback_data=f"debt:settle:{rid}")])
-    text = "🤝 *Долги*\n\n"
-    if rows:
-        lines = []
-        for rid, who, amt, cur, desc, dt in rows:
-            sym = sym_map.get(cur, "")
-            lines.append(f"#{rid} | {who} — *{sym}{amt:,.0f}*  `{dt[5:]}`" + (f"\n    _{desc}_" if desc else ""))
-        text += "\n".join(lines)
+SYM = {"USD": "$", "EUR": "€", "CASH_USD": "$ нал", "CASH_EUR": "€ нал"}
+
+def debt_label(d) -> str:
+    """Красивая строка для одного долга."""
+    sym  = SYM.get(d[5] if len(d) > 5 else "EUR", "€")
+    who  = d[3]
+    amt  = d[4]
+    desc = d[6] if len(d) > 6 else ""
+    dt   = (d[7] if len(d) > 7 else "")[:10]
+    direction = d[2] if len(d) > 2 else "they_owe"
+    debt_type = d[1] if len(d) > 1 else "external"
+
+    if debt_type == "partner":
+        arrow = "← мне должен(а)" if direction == "they_owe" else "→ я должен(а)"
+        who_str = f"Тима/Маша {arrow}"
     else:
-        text += "✅ Долгов нет!"
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        arrow = "← мне должен(а)" if direction == "they_owe" else "→ я должен(а)"
+        who_str = f"{who} {arrow}"
 
-async def debt_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    line = f"*{sym}{amt:,.0f}* | {who_str}"
+    if desc: line += f"\n  _{desc}_"
+    if dt:   line += f"\n  📅 {dt}"
+    return line
+
+async def debts_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Главный экран долгов — показывает сводку и кнопки."""
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("""SELECT id, debt_type, direction, from_user, amount, currency, description, date
+                   FROM debts WHERE settled=0 ORDER BY id DESC""")
+    rows = cur.fetchall(); conn.close()
+
+    # Разбиваем по типам
+    partner_owe_me = [r for r in rows if r[1]=="partner" and r[2]=="they_owe"]
+    partner_i_owe  = [r for r in rows if r[1]=="partner" and r[2]=="i_owe"]
+    ext_owe_me     = [r for r in rows if r[1]=="external" and r[2]=="they_owe"]
+    ext_i_owe      = [r for r in rows if r[1]=="external" and r[2]=="i_owe"]
+
+    lines = ["🤝 *Долги*\n"]
+
+    if partner_owe_me or partner_i_owe:
+        lines.append("👫 *Между нами:*")
+        for r in partner_owe_me:
+            lines.append(f"  #{r[0]} Тима должен(а) мне — *{SYM.get(r[5],'€')}{r[4]:,.0f}*" + (f" _{r[6]}_" if r[6] else ""))
+        for r in partner_i_owe:
+            lines.append(f"  #{r[0]} Я должен(а) Тиме — *{SYM.get(r[5],'€')}{r[4]:,.0f}*" + (f" _{r[6]}_" if r[6] else ""))
+        lines.append("")
+
+    if ext_owe_me or ext_i_owe:
+        lines.append("🌍 *С другими людьми:*")
+        for r in ext_owe_me:
+            lines.append(f"  #{r[0]} {r[3]} должен(а) мне — *{SYM.get(r[5],'€')}{r[4]:,.0f}*" + (f" _{r[6]}_" if r[6] else ""))
+        for r in ext_i_owe:
+            lines.append(f"  #{r[0]} Я должен(а) {r[3]} — *{SYM.get(r[5],'€')}{r[4]:,.0f}*" + (f" _{r[6]}_" if r[6] else ""))
+
+    if not rows:
+        lines.append("✅ Долгов нет!")
+
+    # Кнопки закрытия долгов
+    settle_buttons = []
+    for r in rows:
+        sym = SYM.get(r[5], "€")
+        who = "партнёр" if r[1]=="partner" else r[3]
+        direction_str = "мне должен" if r[2]=="they_owe" else "я должен"
+        settle_buttons.append([InlineKeyboardButton(
+            f"✅ #{r[0]} {who} ({direction_str}) {sym}{r[4]:,.0f}",
+            callback_data=f"debt_settle:{r[0]}"
+        )])
+
+    settle_buttons.append([InlineKeyboardButton("➕ Записать долг", callback_data="debt_new")])
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(settle_buttons) if settle_buttons else None
+    )
+    await update.message.reply_text("Или назад:", reply_markup=back_kb())
+    return DEBT_TYPE  # входим в ConversationHandler
+
+async def debt_new_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Нажали «Записать долг» — выбираем тип."""
     query = update.callback_query
     await query.answer()
-    data = query.data
-    if data == "debt:new":
-        await query.edit_message_reply_markup(reply_markup=None)
-        await ctx.bot.send_message(
-            query.message.chat_id,
-            "🤝 *Кто взял деньги?* Введи имя или @username:",
-            parse_mode="Markdown", reply_markup=back_kb()
-        )
-        return DEBT_WHO
-    if data.startswith("debt:settle:"):
-        debt_id = int(data.split(":")[-1])
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("SELECT from_user, amount, currency FROM debts WHERE id=? AND settled=0", (debt_id,))
-        row = cur.fetchone()
-        if row:
-            conn.execute("UPDATE debts SET settled=1 WHERE id=?", (debt_id,))
-            conn.commit()
-            sym = {"USD": "$", "EUR": "€", "CASH_USD": "$ нал", "CASH_EUR": "€ нал"}.get(row[2], "")
-            await query.edit_message_text(f"✅ Долг #{debt_id} закрыт!\n{row[0]} вернул {sym}{row[1]:,.0f}")
-        conn.close()
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("👫 Между нами (с партнёром)", callback_data="dtype_partner")],
+        [InlineKeyboardButton("🌍 С другим человеком",       callback_data="dtype_external")],
+    ])
+    await query.edit_message_text("*Какой тип долга?*", parse_mode="Markdown", reply_markup=kb)
+    return DEBT_TYPE
+
+async def debt_settle_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Закрыть долг."""
+    query = update.callback_query
+    await query.answer()
+    debt_id = int(query.data.split(":")[-1])
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT from_user, amount, currency FROM debts WHERE id=? AND settled=0", (debt_id,))
+    row = cur.fetchone()
+    if row:
+        conn.execute("UPDATE debts SET settled=1 WHERE id=?", (debt_id,))
+        conn.commit()
+        sym = SYM.get(row[2], "€")
+        await query.edit_message_text(f"✅ Долг #{debt_id} закрыт!\n{row[0]} — {sym}{row[1]:,.0f}")
+    else:
+        await query.edit_message_text("❌ Долг не найден или уже закрыт.")
+    conn.close()
     return MAIN_MENU
+
+async def debt_type_chosen(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Выбрали тип: партнёр или внешний."""
+    query = update.callback_query
+    await query.answer()
+    dtype = query.data.replace("dtype_", "")
+    ctx.user_data["debt_type"] = dtype
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💰 Мне должны",  callback_data="ddir_they_owe")],
+        [InlineKeyboardButton("📤 Я должен(а)", callback_data="ddir_i_owe")],
+    ])
+    await query.edit_message_text("*В какую сторону долг?*", parse_mode="Markdown", reply_markup=kb)
+    return DEBT_DIRECTION
+
+async def debt_direction_chosen(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Выбрали направление."""
+    query = update.callback_query
+    await query.answer()
+    ctx.user_data["debt_direction"] = query.data.replace("ddir_", "")
+
+    dtype = ctx.user_data.get("debt_type", "external")
+    if dtype == "partner":
+        # Имя не нужно — это партнёр
+        ctx.user_data["debt_who"] = "партнёр"
+        await query.edit_message_text("💰 *Сколько?*\nВведи сумму:", parse_mode="Markdown")
+        return DEBT_AMOUNT_S
+    else:
+        await query.edit_message_text("👤 *Кто?* Введи имя или @username:", parse_mode="Markdown")
+        return DEBT_WHO
 
 async def debt_who(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if await is_back(update, ctx): return MAIN_MENU
     ctx.user_data["debt_who"] = update.message.text.strip()
-    await update.message.reply_text("💰 Сколько?", reply_markup=back_kb())
+    await update.message.reply_text("💰 *Сколько?* Введи сумму:", parse_mode="Markdown", reply_markup=back_kb())
     return DEBT_AMOUNT_S
 
 async def debt_amount_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -541,53 +641,62 @@ async def debt_amount_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("❌ Введи число.")
         return DEBT_AMOUNT_S
-    keyboard = [[
-        InlineKeyboardButton("$ USD",    callback_data="dcur:USD"),
-        InlineKeyboardButton("€ EUR",    callback_data="dcur:EUR"),
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("$ USD",     callback_data="dcur:USD"),
+        InlineKeyboardButton("€ EUR",     callback_data="dcur:EUR"),
     ],[
         InlineKeyboardButton("💵 Нал $", callback_data="dcur:CASH_USD"),
         InlineKeyboardButton("💶 Нал €", callback_data="dcur:CASH_EUR"),
-    ]]
-    await update.message.reply_text("Валюта:", reply_markup=InlineKeyboardMarkup(keyboard))
+    ]])
+    await update.message.reply_text("💱 *Валюта:*", parse_mode="Markdown", reply_markup=keyboard)
     return DEBT_CURRENCY
 
 async def debt_currency_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     ctx.user_data["debt_currency"] = query.data.replace("dcur:", "")
-    await query.edit_message_text("📝 Комментарий (или `-` пропустить):")
+    await query.edit_message_text("📝 Комментарий _(или `-` пропустить)_:", parse_mode="Markdown")
     return DEBT_DESC_S
 
 async def debt_desc_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if await is_back(update, ctx): return MAIN_MENU
     desc = update.message.text.strip()
     if desc == "-": desc = ""
+
+    dtype     = ctx.user_data.get("debt_type", "external")
+    direction = ctx.user_data.get("debt_direction", "they_owe")
+    who       = ctx.user_data.get("debt_who", "")
+    amount    = ctx.user_data.get("debt_amount", 0)
+    currency  = ctx.user_data.get("debt_currency", "EUR")
+
     conn = get_db()
     conn.execute(
-        "INSERT INTO debts (from_user, amount, currency, description, date) VALUES (?,?,?,?,?)",
-        (ctx.user_data["debt_who"], ctx.user_data["debt_amount"],
-         ctx.user_data["debt_currency"], desc, date.today().isoformat())
+        "INSERT INTO debts (debt_type, direction, from_user, amount, currency, description, date) VALUES (?,?,?,?,?,?,?)",
+        (dtype, direction, who, amount, currency, desc, date.today().isoformat())
     )
     conn.commit(); conn.close()
-    sym = {"USD": "$", "EUR": "€", "CASH_USD": "$ нал", "CASH_EUR": "€ нал"}.get(ctx.user_data["debt_currency"], "")
+
+    sym = SYM.get(currency, "€")
+    direction_str = "тебе должны" if direction == "they_owe" else "ты должен(а)"
+    type_str = "партнёру" if dtype == "partner" else who
+
     await update.message.reply_text(
-        f"✅ *Записано:* {ctx.user_data['debt_who']} взял *{sym}{ctx.user_data['debt_amount']:,.0f}*"
-        + (f"\n📝 _{desc}_" if desc else ""),
+        f"✅ *Записано!*\n"
+        f"{'👫' if dtype=='partner' else '🌍'} {type_str} — {direction_str}\n"
+        f"*{sym}{amount:,.0f}*" + (f"\n📝 _{desc}_" if desc else ""),
         parse_mode="Markdown", reply_markup=main_kb()
     )
     ctx.user_data.clear()
     return MAIN_MENU
 
-
 # ── Кошелёк ───────────────────────────────────────────────────
 async def wallet_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    conn = get_db()
-    cur = conn.cursor()
+    conn = get_db(); cur = conn.cursor()
     cur.execute("SELECT key, label, currency, amount FROM wallets")
     rows = cur.fetchall(); conn.close()
     keyboard = [
-        [InlineKeyboardButton(f"{label}  {cur}{amt:,.0f}", callback_data=f"wlt:{key}")]
-        for key, label, cur, amt in rows
+        [InlineKeyboardButton(f"{label} {cur_}{amt:,.0f}", callback_data=f"wlt:{key}")]
+        for key, label, cur_, amt in rows
     ]
     await update.message.reply_text(
         "🏦 *Выбери кошелёк:*",
@@ -600,13 +709,13 @@ async def wallet_chosen(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     ctx.user_data["wallet_key"] = query.data.replace("wlt:", "")
-    keyboard = [[
-        InlineKeyboardButton("➕ Пополнить", callback_data="wop:add"),
-        InlineKeyboardButton("➖ Снять",     callback_data="wop:sub"),
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("➕ Пополнить",        callback_data="wop:add"),
+        InlineKeyboardButton("➖ Снять",            callback_data="wop:sub"),
     ],[
-        InlineKeyboardButton("✏️ Установить сумму", callback_data="wop:set")
-    ]]
-    await query.edit_message_text("Что сделать?", reply_markup=InlineKeyboardMarkup(keyboard))
+        InlineKeyboardButton("✏️ Установить сумму", callback_data="wop:set"),
+    ]])
+    await query.edit_message_text("Что сделать?", reply_markup=keyboard)
     return WALLET_OP
 
 async def wallet_op(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -626,23 +735,21 @@ async def wallet_amount(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return WALLET_AMOUNT_S
     key = ctx.user_data["wallet_key"]
     op  = ctx.user_data["wallet_op"]
-    conn = get_db()
-    cur = conn.cursor()
+    conn = get_db(); cur = conn.cursor()
     cur.execute("SELECT label, currency, amount FROM wallets WHERE key=?", (key,))
-    label, cur, old = cur.fetchone()
+    label, cur_, old = cur.fetchone()
     new = old + amount if op == "add" else (old - amount if op == "sub" else amount)
     conn.execute("UPDATE wallets SET amount=? WHERE key=?", (new, key))
     conn.commit(); conn.close()
     await update.message.reply_text(
-        f"✅ *{label}* обновлён\n{cur}{old:,.0f} → *{cur}{new:,.0f}*",
+        f"✅ *{label}* обновлён\n{cur_}{old:,.0f} → *{cur_}{new:,.0f}*",
         parse_mode="Markdown", reply_markup=main_kb()
     )
     ctx.user_data.clear()
     return MAIN_MENU
 
-
 # ── Аналитика ─────────────────────────────────────────────────
-def analytics_nav_kb(year: int, month: int) -> InlineKeyboardMarkup:
+def analytics_nav_kb(year, month):
     py, pm = prev_month(year, month)
     ny, nm = next_month(year, month)
     today = date.today()
@@ -652,21 +759,21 @@ def analytics_nav_kb(year: int, month: int) -> InlineKeyboardMarkup:
         row1.append(InlineKeyboardButton(f"{month_name_ru(nm)[:3]} ▶️", callback_data=f"an_month:{ny}:{nm}"))
     row2 = [
         InlineKeyboardButton("⚖️ Сравнить с пред.", callback_data=f"an_compare:{year}:{month}"),
-        InlineKeyboardButton("📆 Год", callback_data=f"an_year:{year}"),
+        InlineKeyboardButton("📆 Год",              callback_data=f"an_year:{year}"),
     ]
     return InlineKeyboardMarkup([row1, row2])
 
-def format_month_stats(year: int, month: int) -> str:
-    cats = month_by_category_for(year, month)
+def format_month_stats(year, month):
+    cats  = month_by_category_for(year, month)
     income_eur = usd_to_eur(INCOME_USD)
     total = sum(cats.values()) if cats else 0.0
-    left = income_eur - FIXED_TOTAL - total
+    left  = income_eur - FIXED_TOTAL - total
     lines = [f"📈 *{month_name_ru(month)} {year}*\n"]
     if cats:
         for cat, amt in sorted(cats.items(), key=lambda x: -x[1]):
             pct = amt / total * 100
             bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
-            lines.append(f"{cat}\n`{bar}` {pct:.0f}%  €{c(amt)}\n")
+            lines.append(f"{cat}\n`{bar}` {pct:.0f}% €{c(amt)}\n")
         lines.append(f"💶 *Потрачено: €{c(total)}*")
         lines.append(f"{'🟢' if left > 0 else '🔴'} Остаток: *€{c(left)}*")
     else:
@@ -675,9 +782,9 @@ def format_month_stats(year: int, month: int) -> str:
 
 async def show_analytics(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     today = date.today()
-    text = format_month_stats(today.year, today.month)
     await update.message.reply_text(
-        text, parse_mode="Markdown",
+        format_month_stats(today.year, today.month),
+        parse_mode="Markdown",
         reply_markup=analytics_nav_kb(today.year, today.month)
     )
 
@@ -685,9 +792,7 @@ async def analytics_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-
-    if data == "noop":
-        return
+    if data == "noop": return
 
     if data.startswith("an_month:"):
         _, year, month = data.split(":")
@@ -696,7 +801,6 @@ async def analytics_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             format_month_stats(year, month), parse_mode="Markdown",
             reply_markup=analytics_nav_kb(year, month)
         )
-
     elif data.startswith("an_compare:"):
         _, year, month = data.split(":")
         year, month = int(year), int(month)
@@ -713,14 +817,13 @@ async def analytics_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             b = cats_cur.get(cat, 0.0)
             delta = b - a
             short = cat.split(" ", 1)[-1][:12]
-            sign = "+" if delta > 0 else ""
-            lines.append(f"`{short:<12}` €{c(a):>5} → €{c(b):>5}  {sign}{c(delta)}")
+            sign  = "+" if delta > 0 else ""
+            lines.append(f"`{short:<12}` €{c(a):>5} → €{c(b):>5} {sign}{c(delta)}")
         lines.append(f"\n💶 *{month_name_ru(pm)}: €{total_prev:.0f}*")
         lines.append(f"💶 *{month_name_ru(month)}: €{total_cur:.0f}*")
         lines.append(f"{'📈' if diff > 0 else '📉'} Разница: *{'+' if diff>0 else ''}{c(diff)} €*")
         back = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data=f"an_month:{year}:{month}")]])
         await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=back)
-
     elif data.startswith("an_year:"):
         _, year = data.split(":")
         year = int(year)
@@ -732,14 +835,13 @@ async def analytics_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             grand += total
             if total > 0:
                 saved = income_eur - FIXED_TOTAL - total
-                bar = "█" * min(int(total / 200), 15)
-                lines.append(f"`{month_name_ru(m)[:3]}` `{bar:<15}` €{c(total)}  {'🟢' if saved>0 else '🔴'}€{c(abs(saved))}")
+                bar   = "█" * min(int(total / 200), 15)
+                lines.append(f"`{month_name_ru(m)[:3]}` `{bar:<15}` €{c(total)} {'🟢' if saved>0 else '🔴'}€{c(abs(saved))}")
             else:
                 lines.append(f"`{month_name_ru(m)[:3]}` —")
-        lines.append(f"\n💶 *Итого: €{c(grand)}*  |  Среднее: *€{c(grand/12)}/мес*")
+        lines.append(f"\n💶 *Итого: €{c(grand)}* | Среднее: *€{c(grand/12)}/мес*")
         back = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data=f"an_month:{year}:{date.today().month}")]])
         await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=back)
-
 
 # ── После записи траты ────────────────────────────────────────
 async def after_record_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -755,62 +857,15 @@ async def after_record_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton(cat, callback_data=f"cat:{cat}")] for cat in CATEGORIES]
         keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="go_main")])
         await ctx.bot.send_message(
-            query.message.chat_id,
-            "📂 *Выбери категорию:*",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
+            query.message.chat_id, "📂 *Выбери категорию:*",
+            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
         )
         return ADD_CATEGORY
 
-
-# ── /sheetstatus ──────────────────────────────────────────────
-async def sheet_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    import base64
-    creds_b64 = os.environ.get("GOOGLE_CREDENTIALS_B64", "")
-    lines = ["Диагностика Google Sheets:\n"]
-    lines.append(f"gspread: OK" if GSPREAD_AVAILABLE else "gspread: NO")
-    lines.append(f"CREDENTIALS_B64: OK" if creds_b64 else "CREDENTIALS_B64: EMPTY")
-    lines.append(f"SHEET_ID: {GOOGLE_SHEET_ID}")
-    if creds_b64:
-        try:
-            import base64 as b64mod
-            decoded = b64mod.b64decode(creds_b64).decode()
-            creds_dict = json.loads(decoded)
-            key_b64 = os.environ.get("GOOGLE_PRIVATE_KEY_B64", "")
-            if key_b64:
-                creds_dict["private_key"] = b64mod.b64decode(key_b64).decode()
-            key = creds_dict.get("private_key", "")
-            lines.append(f"JSON: OK")
-            lines.append(f"email: {creds_dict.get('client_email', '?')}")
-            lines.append(f"key len: {len(key)}, newlines: {key.count(chr(10))}")
-            lines.append(f"key start: {repr(key[:50])}")
-        except Exception as e:
-            lines.append(f"JSON error: {e}")
-    sh = get_sheet()
-    lines.append(f"Sheet connect: OK" if sh else "Sheet connect: FAIL")
-    if not sh:
-        import base64
-        try:
-            creds_dict = json.loads(base64.b64decode(creds_b64).decode())
-            pk = creds_dict.get("private_key", "")
-            creds_dict["private_key"] = pk.replace("\\n", "\n")
-            scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-            from google.oauth2.service_account import Credentials as C
-            import gspread as gs
-            creds = C.from_service_account_info(creds_dict, scopes=scopes)
-            client = gs.authorize(creds)
-            client.open_by_key(GOOGLE_SHEET_ID)
-        except Exception as e:
-            lines.append(f"Error: {str(e)}")
-    await update.message.reply_text("\n".join(lines))
-
-
-# ── cancel ────────────────────────────────────────────────────
 async def cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data.clear()
     await go_home(update, "❌ Отменено.")
     return MAIN_MENU
-
 
 # ── main ──────────────────────────────────────────────────────
 def main():
@@ -835,35 +890,54 @@ def main():
                 CallbackQueryHandler(after_record_callback, pattern="^(add_more|go_main)$"),
                 MessageHandler(filters.Regex("^🔙 Главное меню$"), cancel),
             ],
-            ADD_AMOUNT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, add_amount)],
-            ADD_DESC:     [
+            ADD_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_amount)],
+            ADD_DESC: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_desc),
                 CallbackQueryHandler(after_record_callback, pattern="^(add_more|go_main)$"),
             ],
-            DEBT_WHO:     [MessageHandler(filters.TEXT & ~filters.COMMAND, debt_who)],
-            DEBT_AMOUNT_S:[MessageHandler(filters.TEXT & ~filters.COMMAND, debt_amount_handler)],
-            DEBT_CURRENCY:[CallbackQueryHandler(debt_currency_handler, pattern="^dcur:")],
-            DEBT_DESC_S:  [MessageHandler(filters.TEXT & ~filters.COMMAND, debt_desc_handler)],
-            WALLET_CHOOSE:[
+
+            # ── Долги ────────────────────────────────────────
+            DEBT_TYPE: [
+                CallbackQueryHandler(debt_new_cb,        pattern="^debt_new$"),
+                CallbackQueryHandler(debt_settle_cb,     pattern="^debt_settle:"),
+                CallbackQueryHandler(debt_type_chosen,   pattern="^dtype_"),
+                MessageHandler(filters.Regex("^🔙 Главное меню$"), cancel),
+            ],
+            DEBT_DIRECTION: [
+                CallbackQueryHandler(debt_direction_chosen, pattern="^ddir_"),
+                MessageHandler(filters.Regex("^🔙 Главное меню$"), cancel),
+            ],
+            DEBT_WHO: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, debt_who),
+            ],
+            DEBT_AMOUNT_S: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, debt_amount_handler),
+            ],
+            DEBT_CURRENCY: [
+                CallbackQueryHandler(debt_currency_handler, pattern="^dcur:"),
+            ],
+            DEBT_DESC_S: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, debt_desc_handler),
+            ],
+
+            # ── Кошелёк ──────────────────────────────────────
+            WALLET_CHOOSE: [
                 CallbackQueryHandler(wallet_chosen, pattern="^wlt:"),
                 MessageHandler(filters.Regex("^🔙 Главное меню$"), cancel),
             ],
-            WALLET_OP:    [CallbackQueryHandler(wallet_op, pattern="^wop:")],
+            WALLET_OP:     [CallbackQueryHandler(wallet_op,     pattern="^wop:")],
             WALLET_AMOUNT_S:[MessageHandler(filters.TEXT & ~filters.COMMAND, wallet_amount)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
             CommandHandler("start", start),
-            CommandHandler("sheetstatus", sheet_status),
             MessageHandler(filters.Regex("^🔙 Главное меню$"), cancel),
         ],
         allow_reentry=True,
     )
 
     app.add_handler(CommandHandler("ping", lambda u, c: u.message.reply_text("pong")))
-    app.add_handler(CommandHandler("sheetstatus", sheet_status))
-    app.add_handler(CallbackQueryHandler(debt_callback, pattern="^debt:"))
-    app.add_handler(CallbackQueryHandler(analytics_callback, pattern="^(an_month:|an_compare:|an_year:|noop)"))
+    app.add_handler(CallbackQueryHandler(analytics_callback,     pattern="^(an_month:|an_compare:|an_year:|noop)"))
     app.add_handler(CallbackQueryHandler(delete_expense_callback, pattern="^del_expense:"))
     app.add_handler(conv)
 
