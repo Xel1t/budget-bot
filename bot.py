@@ -69,13 +69,13 @@ def get_sheet():
         import base64
         scopes = ["https://www.googleapis.com/auth/spreadsheets"]
         creds_b64 = os.environ.get("GOOGLE_CREDENTIALS_B64", "")
+        key_b64 = os.environ.get("GOOGLE_PRIVATE_KEY_B64", "")
         if not creds_b64:
             return None
         creds_dict = json.loads(base64.b64decode(creds_b64).decode())
-        # Fix escaped newlines in private key
-        pk = creds_dict.get("private_key", "")
-        pk = pk.replace("\\n", "\n").replace("\\\\n", "\n")
-        creds_dict["private_key"] = pk
+        # Override private key with separately stored base64-decoded key
+        if key_b64:
+            creds_dict["private_key"] = base64.b64decode(key_b64).decode()
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         client = gspread.authorize(creds)
         return client.open_by_key(GOOGLE_SHEET_ID)
