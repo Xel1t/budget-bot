@@ -730,6 +730,7 @@ async def sheet_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lines = ["🔍 *Диагностика Google Sheets:*\n"]
     lines.append(f"gspread доступен: {'✅' if GSPREAD_AVAILABLE else '❌'}")
     lines.append(f"GOOGLE_CREDENTIALS: {'✅ есть' if GOOGLE_CREDENTIALS else '❌ пусто'}")
+    lines.append(f"credentials.json: {'✅ есть' if os.path.exists('credentials.json') else '❌ нет'}")
     lines.append(f"GOOGLE_SHEET_ID: `{GOOGLE_SHEET_ID}`")
     if GOOGLE_CREDENTIALS:
         try:
