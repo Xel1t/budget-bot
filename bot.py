@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import requests
+import math
 from datetime import datetime, date
 from calendar import monthrange
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
@@ -118,6 +119,7 @@ def get_usd_to_eur() -> float:
         return 0.92
 
 def usd_to_eur(usd): return round(usd * get_usd_to_eur(), 2)
+def c(x): return math.ceil(x)  # always round up for display
 def eur_to_usd(eur):
     r = get_usd_to_eur()
     return round(eur / r, 2) if r else round(eur / 0.92, 2)
@@ -266,8 +268,8 @@ async def add_desc(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"👤 @{username}  |  {ctx.user_data['category']}\n"
         f"💶 €{ctx.user_data['amount_eur']}{ctx.user_data.get('amount_note','')}"
         + (f"\n📝 _{desc}_" if desc else "") +
-        f"\n\n📊 Потрачено: *€{spent:.0f}*\n"
-        f"{'🟢' if left > 0 else '🔴'} Остаток: *€{left:.0f}*",
+        f"\n\n📊 Потрачено: *€{c(spent)}*\n"
+        f"{'🟢' if left > 0 else '🔴'} Остаток: *€{c(left)}*",
         parse_mode="Markdown", reply_markup=main_kb()
     )
     ctx.user_data.clear()
@@ -291,7 +293,7 @@ async def show_overview(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"🏠 Фикс. расходы: *€{FIXED_TOTAL:,.0f}*\n"
         f"🛒 Потрачено: *€{spent:,.0f}*\n"
         f"{'🟢' if left > 0 else '🔴'} Остаток: *€{left:,.0f}*\n"
-        f"📅 До конца месяца: {days_left} дн. → *€{daily:.0f}/день*\n\n"
+        f"📅 До конца месяца: {days_left} дн. → *€{c(daily)}/день*\n\n"
         f"🏦 Накопления: *${sav_usd:,.0f}* ≈ *€{usd_to_eur(sav_usd):,.0f}*",
         parse_mode="Markdown", reply_markup=main_kb()
     )
@@ -330,7 +332,7 @@ async def show_history(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("📜 *Последние 10 трат:*\n_(нажми 🗑 чтобы удалить)_", parse_mode="Markdown", reply_markup=main_kb())
     for eid, user, amt, cat, desc, dt in rows:
-        text = f"`{dt[5:]}` {cat}\n💶 €{amt:.0f}  👤 {user}" + (f"\n📝 {desc}" if desc else "")
+        text = f"`{dt[5:]}` {cat}\n💶 €{c(amt)}  👤 {user}" + (f"\n📝 {desc}" if desc else "")
         keyboard = InlineKeyboardMarkup([[
             InlineKeyboardButton("🗑 Удалить", callback_data=f"del_expense:{eid}")
         ]])
@@ -349,7 +351,7 @@ async def delete_expense_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE
         conn.commit()
         amt, cat, desc = row
         await query.edit_message_text(
-            f"🗑 *Удалено:* {cat} — €{amt:.0f}" + (f"\n_{desc}_" if desc else ""),
+            f"🗑 *Удалено:* {cat} — €{c(amt)}" + (f"\n_{desc}_" if desc else ""),
             parse_mode="Markdown"
         )
     else:
@@ -361,8 +363,8 @@ async def delete_expense_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE
 async def show_fixed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lines = ["🏠 *Фиксированные расходы:*\n"]
     for name, amt in FIXED_EXPENSES:
-        lines.append(f"• {name}: *€{amt:.0f}*")
-    lines.append(f"\n💶 *Итого: €{FIXED_TOTAL:.0f}/мес*")
+        lines.append(f"• {name}: *€{c(amt)}*")
+    lines.append(f"\n💶 *Итого: €{c(FIXED_TOTAL)}/мес*")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=main_kb())
 
 
@@ -553,9 +555,9 @@ def format_month_stats(year: int, month: int) -> str:
         for cat, amt in sorted(cats.items(), key=lambda x: -x[1]):
             pct = amt / total * 100
             bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
-            lines.append(f"{cat}\n`{bar}` {pct:.0f}%  €{amt:.0f}\n")
-        lines.append(f"💶 *Потрачено: €{total:.0f}*")
-        lines.append(f"{'🟢' if left > 0 else '🔴'} Остаток: *€{left:.0f}*")
+            lines.append(f"{cat}\n`{bar}` {pct:.0f}%  €{c(amt)}\n")
+        lines.append(f"💶 *Потрачено: €{c(total)}*")
+        lines.append(f"{'🟢' if left > 0 else '🔴'} Остаток: *€{c(left)}*")
     else:
         lines.append("📭 Трат нет")
     return "\n".join(lines)
@@ -601,10 +603,10 @@ async def analytics_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             delta = b - a
             short = cat.split(" ", 1)[-1][:12]
             sign = "+" if delta > 0 else ""
-            lines.append(f"`{short:<12}` €{a:>5.0f} → €{b:>5.0f}  {sign}{delta:.0f}")
+            lines.append(f"`{short:<12}` €{c(a):>5} → €{c(b):>5}  {sign}{c(delta)}")
         lines.append(f"\n💶 *{month_name_ru(pm)}: €{total_prev:.0f}*")
         lines.append(f"💶 *{month_name_ru(month)}: €{total_cur:.0f}*")
-        lines.append(f"{'📈' if diff > 0 else '📉'} Разница: *{'+' if diff>0 else ''}{diff:.0f} €*")
+        lines.append(f"{'📈' if diff > 0 else '📉'} Разница: *{'+' if diff>0 else ''}{c(diff)} €*")
         back = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data=f"an_month:{year}:{month}")]])
         await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=back)
 
@@ -620,10 +622,10 @@ async def analytics_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if total > 0:
                 saved = income_eur - FIXED_TOTAL - total
                 bar = "█" * min(int(total / 200), 15)
-                lines.append(f"`{month_name_ru(m)[:3]}` `{bar:<15}` €{total:.0f}  {'🟢' if saved>0 else '🔴'}€{abs(saved):.0f}")
+                lines.append(f"`{month_name_ru(m)[:3]}` `{bar:<15}` €{c(total)}  {'🟢' if saved>0 else '🔴'}€{c(abs(saved))}")
             else:
                 lines.append(f"`{month_name_ru(m)[:3]}` —")
-        lines.append(f"\n💶 *Итого: €{grand:.0f}*  |  Среднее: *€{grand/12:.0f}/мес*")
+        lines.append(f"\n💶 *Итого: €{c(grand)}*  |  Среднее: *€{c(grand/12)}/мес*")
         back = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data=f"an_month:{year}:{date.today().month}")]])
         await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=back)
 
