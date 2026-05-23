@@ -67,6 +67,9 @@ def get_sheet():
         return None
     try:
         creds_dict = json.loads(GOOGLE_CREDENTIALS)
+        # Fix private key newlines that get escaped when stored as env var
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         scopes = ["https://www.googleapis.com/auth/spreadsheets"]
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         client = gspread.authorize(creds)
@@ -743,6 +746,8 @@ async def sheet_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # Try to get detailed error
         try:
             creds_dict = json.loads(GOOGLE_CREDENTIALS)
+            if "private_key" in creds_dict:
+                creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
             scopes = ["https://www.googleapis.com/auth/spreadsheets"]
             from google.oauth2.service_account import Credentials as C
             import gspread as gs
