@@ -687,7 +687,10 @@ def main():
             MessageHandler(filters.Regex(menu_pattern), menu_router),
         ],
         states={
-            MAIN_MENU: [MessageHandler(filters.Regex(menu_pattern), menu_router)],
+            MAIN_MENU: [
+                MessageHandler(filters.Regex(menu_pattern), menu_router),
+                CallbackQueryHandler(after_record_callback, pattern="^(add_more|go_main)$"),
+            ],
             ADD_CATEGORY: [
                 CallbackQueryHandler(add_category_chosen, pattern="^cat:"),
                 CallbackQueryHandler(after_record_callback, pattern="^(add_more|go_main)$"),
