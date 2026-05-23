@@ -68,18 +68,51 @@ def get_sheet():
     try:
         import base64
         scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-        creds_b64 = os.environ.get("GOOGLE_CREDENTIALS_B64", "")
-        key_b64 = os.environ.get("GOOGLE_PRIVATE_KEY_B64", "")
-        if not creds_b64:
-            return None
-        creds_dict = json.loads(base64.b64decode(creds_b64).decode())
-        # Override private key with separately stored base64-decoded key
-        if key_b64:
-            raw_key = base64.b64decode(key_b64).decode()
-            # Fix any whitespace issues in PEM lines
-            lines_key = raw_key.strip().split('\n')
-            clean_key = '\n'.join(line.strip() for line in lines_key) + '\n'
-            creds_dict["private_key"] = clean_key
+
+        # Build credentials dict directly
+        creds_dict = {
+            "type": "service_account",
+            "project_id": "mystic-song-468921-r7",
+            "private_key_id": "6e82a413d8181dd1ae45bfd60839c3227ef24785",
+            "private_key": (
+                "-----BEGIN PRIVATE KEY-----\n"
+                "MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQDAHRztikWqJvoq\n"
+                "bAFpsy9E5RXWtNJiAzzkB4IMU4hC0C1G53atWkYV4dyPOY8+8R9aSFuL3AgmfTZs\n"
+                "TTVEUIbuk+KC3Zh9slWL/2JGebpwP2XwdXXzFKS8aObg6mBjzkQug3HeuNelV2Zo\n"
+                "adFqgDrs5KVHTnLoLsUpuSiURnP3xuQsaBAN0Mk2eNCPKSZIFnxBv4uW91R+DZ4P\n"
+                "2kfBy+vRPHwmSG+H4m9JdtHWCGhyVn1Cscevchs6rqJxZqoXyH3XradTLqL1uHya\n"
+                "pn/mPajmTOiGL3X81Zn18Ez327Fy+UPpI/zdGXTeQ3Mlu/0J+XzLZ0+/QUb6G6sA\n"
+                "URlIV8jVAgMBAAECggEATk2PdOJe8rNgU9oh2UtHgPU+qXyaI4jeULMetpd1eoYP\n"
+                "bk75eD7LQjAFDfuP/z+YX9wONDtCty1h+VKe23FXDfcI4/4eIV2GsMEu9Tq4Wvf8\n"
+                "PL4jjShk3MaFFDdzgjqYX70DtJvyiVnOS9CVoqsRWWz4UNAQ1cH6ar8lYwo0SlD5\n"
+                "eCbQRs3cGKvkccpeVLilkkn7MH+x8W053RtJBOhA4lG9kjInuBbA4+N7ahDpvgOU\n"
+                "3D9iZfU6y4D5BTCR27sSc37Ia3E4wndDWiVByuvvMD/zSs2LKDBqPordWlokYOmf\n"
+                "IYr64HuAKQvNXUxQ79RD+hovu7JwVJUdelFfThdRIQKBgQDu0yIDkxhFFnGUQs2W\n"
+                "jGC649lgtm/7wS0OFQ7LTz7AGUDbyywQE9AEuamt3/cWnyh1n1KGzl9xT+P1ld96\n"
+                "6H5NiQcvRqCb86o1w5wFNBKaeEsX+UpZvsgAUjnFgxP4RAY9sHoCjF1V7CvY2THv\n"
+                "oY8QyEc8zB1AtKduNx75TRljTwKBgQDN7gKTSZfnWYfWlHBC16CmMpXD4s0Xtg/C\n"
+                "Z+xRllgPU4U/3iRUAhQrlzJGQYu5fholFLnQM0QvZFqKc1GZ8cDkCN56GQlFnJ8g\n"
+                "aj2oKMxFvr+dYqRYEQOIebnJ4PdFTmctrQc+DuQi45BLx1kTzvMqA+jascwfWgao\n"
+                "IP5be3LYmwKBgQDptGpgnRzu3puevhB49j3iJP2fimfjMJJqaWjkw1NgoFW7wAIK\n"
+                "aZjyRs0ofTZKSM1K7PHRQTpcpBUrSdI7cC/IqAMD3FVmxvcVTanr3Z0m0/iIKUb8\n"
+                "s5j713r5MN/l3otM6tk6jSj43/e4aDJZkPtzLMmpUQR/QUlmrUH+K9hgOQKBgQDJ\n"
+                "ciFWz9EnYa++O2suGB1xN17GRuF2ZoU4Gc1VaosuQvfAqKBFBduRYNCvZYM3q6IL\n"
+                "0CCNCPmUmsjvUyvqOlIFQJ/SNRea30HSxdsW2wIo4BY18b7u34XjRaB3WfjJ9Y59\n"
+                "YhwJmyuU7aPEXXhIJlQ9L6Hj/bW+naSRZ+UqvLJ2LQKBgQDSg9HHXiA3Hcz7bwlf\n"
+                "t5AaCORPrqSgZ5EAc4ICOYzpGG4IH1ibNyknZOk7Qm1as4KO/k93cU1qa/W3tepN\n"
+                "CiXZI8yyMxjaz1PzRMn1qh3air682QGo340gUWKMX7ylpTyN4D83bFpAf8VlIy9C\n"
+                "dYivzokWmIFaPYuWkHaDfbUtXw==\n"
+                "-----END PRIVATE KEY-----\n"
+            ),
+            "client_email": "budgetbotv2@mystic-song-468921-r7.iam.gserviceaccount.com",
+            "client_id": "116593513222553861356",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/budgetbotv2%40mystic-song-468921-r7.iam.gserviceaccount.com",
+            "universe_domain": "googleapis.com"
+        }
+
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         client = gspread.authorize(creds)
         return client.open_by_key(GOOGLE_SHEET_ID)
